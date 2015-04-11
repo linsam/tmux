@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 
+#include <errno.h>
 #include <event.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -39,9 +40,8 @@ void	server_client_reset_state(struct client *);
 int	server_client_assume_paste(struct session *);
 
 int	server_client_msg_dispatch(struct client *);
-void	server_client_msg_command(struct client *, struct msg_command_data *);
-void	server_client_msg_identify(
-	    struct client *, struct msg_identify_data *, int);
+void	server_client_msg_command(struct client *, struct imsg *);
+void	server_client_msg_identify(struct client *, struct imsg *);
 void	server_client_msg_shell(struct client *);
 
 /* Create a new client. */
@@ -62,12 +62,14 @@ server_client_create(int fd)
 		fatal("gettimeofday failed");
 	memcpy(&c->activity_time, &c->creation_time, sizeof c->activity_time);
 
+	environ_init(&c->environ);
+
 	c->cmdq = cmdq_new(c);
 	c->cmdq->client_exit = 1;
 
-	c->stdin_data = evbuffer_new ();
-	c->stdout_data = evbuffer_new ();
-	c->stderr_data = evbuffer_new ();
+	c->stdin_data = evbuffer_new();
+	c->stdout_data = evbuffer_new();
+	c->stderr_data = evbuffer_new();
 
 	c->tty.fd = -1;
 	c->title = NULL;
@@ -111,21 +113,22 @@ server_client_create(int fd)
 
 /* Open client terminal if needed. */
 int
-server_client_open(struct client *c, struct session *s, char **cause)
+server_client_open(struct client *c, char **cause)
 {
-	struct options	*oo = s != NULL ? &s->options : &global_s_options;
-	char		*overrides;
-
 	if (c->flags & CLIENT_CONTROL)
 		return (0);
 
-	if (!(c->flags & CLIENT_TERMINAL)) {
-		*cause = xstrdup ("not a terminal");
+	if (strcmp(c->ttyname, "/dev/tty") == 0) {
+		*cause = xstrdup("can't use /dev/tty");
 		return (-1);
 	}
 
-	overrides = options_get_string(oo, "terminal-overrides");
-	if (tty_open(&c->tty, overrides, cause) != 0)
+	if (!(c->flags & CLIENT_TERMINAL)) {
+		*cause = xstrdup("not a terminal");
+		return (-1);
+	}
+
+	if (tty_open(&c->tty, cause) != 0)
 		return (-1);
 
 	return (0);
@@ -150,17 +153,20 @@ server_client_lost(struct client *c)
 	 */
 	if (c->flags & CLIENT_TERMINAL)
 		tty_free(&c->tty);
+	free(c->ttyname);
+	free(c->term);
 
-	evbuffer_free (c->stdin_data);
-	evbuffer_free (c->stdout_data);
+	evbuffer_free(c->stdin_data);
+	evbuffer_free(c->stdout_data);
 	if (c->stderr_data != c->stdout_data)
-		evbuffer_free (c->stderr_data);
+		evbuffer_free(c->stderr_data);
 
 	status_free_jobs(&c->status_new);
 	status_free_jobs(&c->status_old);
 	screen_free(&c->status);
 
 	free(c->title);
+	close(c->cwd);
 
 	evtimer_del(&c->repeat_timer);
 
@@ -168,7 +174,7 @@ server_client_lost(struct client *c)
 		evtimer_del(&c->identify_timer);
 
 	free(c->message_string);
-	if (event_initialized (&c->message_timer))
+	if (event_initialized(&c->message_timer))
 		evtimer_del(&c->message_timer);
 	for (i = 0; i < ARRAY_LENGTH(&c->message_log); i++) {
 		msg = &ARRAY_ITEM(&c->message_log, i);
@@ -178,7 +184,6 @@ server_client_lost(struct client *c)
 
 	free(c->prompt_string);
 	free(c->prompt_buffer);
-	free(c->cwd);
 
 	c->cmdq->dead = 1;
 	cmdq_free(c->cmdq);
@@ -218,7 +223,8 @@ server_client_callback(int fd, short events, void *data)
 		return;
 
 	if (fd == c->ibuf.fd) {
-		if (events & EV_WRITE && msgbuf_write(&c->ibuf.w) < 0)
+		if (events & EV_WRITE && msgbuf_write(&c->ibuf.w) <= 0 &&
+		    errno != EAGAIN)
 			goto client_lost;
 
 		if (c->flags & CLIENT_BAD) {
@@ -274,7 +280,7 @@ server_client_status_timer(void)
 		interval = options_get_number(&s->options, "status-interval");
 
 		difference = tv.tv_sec - c->status_timer.tv_sec;
-		if (difference >= interval) {
+		if (interval != 0 && difference >= interval) {
 			status_update_jobs(c);
 			c->flags |= CLIENT_STATUS;
 		}
@@ -318,10 +324,11 @@ server_client_check_mouse(struct client *c, struct window_pane *wp)
 	else if (statusat > 0 && m->y >= (u_int)statusat)
 		m->y = statusat - 1;
 
-	/* Is this a pane selection? Allow down only in copy mode. */
+	/* Is this a pane selection? */
 	if (options_get_number(oo, "mouse-select-pane") &&
-	    (m->event == MOUSE_EVENT_DOWN || wp->mode != &window_copy_mode)) {
+	    (m->event == MOUSE_EVENT_DOWN || m->event == MOUSE_EVENT_WHEEL)) {
 		window_set_active_at(wp->window, m->x, m->y);
+		server_status_window(wp->window);
 		server_redraw_window_borders(wp->window);
 		wp = wp->window->active; /* may have changed */
 	}
@@ -513,8 +520,10 @@ server_client_loop(void)
 
 		w->flags &= ~WINDOW_REDRAW;
 		TAILQ_FOREACH(wp, &w->panes, entry) {
-			server_client_check_focus(wp);
-			server_client_check_resize(wp);
+			if (wp->fd != -1) {
+				server_client_check_focus(wp);
+				server_client_check_resize(wp);
+			}
 			wp->flags &= ~PANE_REDRAW;
 		}
 	}
@@ -526,7 +535,7 @@ server_client_check_resize(struct window_pane *wp)
 {
 	struct winsize	ws;
 
-	if (wp->fd == -1 || !(wp->flags & PANE_RESIZE))
+	if (!(wp->flags & PANE_RESIZE))
 		return;
 
 	memset(&ws, 0, sizeof ws);
@@ -541,7 +550,7 @@ server_client_check_resize(struct window_pane *wp)
 		 * other platforms and ignoring it doesn't seem to cause any
 		 * issues.
 		 */
-		if (errno != EINVAL)
+		if (errno != EINVAL && errno != ENXIO)
 #endif
 		fatal("ioctl failed");
 	}
@@ -555,6 +564,15 @@ server_client_check_focus(struct window_pane *wp)
 {
 	u_int		 i;
 	struct client	*c;
+	int		 push;
+
+	/* Are focus events off? */
+	if (!options_get_number(&global_options, "focus-events"))
+		return;
+
+	/* Do we need to push the focus state? */
+	push = wp->flags & PANE_FOCUSPUSH;
+	wp->flags &= ~PANE_FOCUSPUSH;
 
 	/* If we don't care about focus, forget it. */
 	if (!(wp->base.mode & MODE_FOCUSON))
@@ -587,13 +605,13 @@ server_client_check_focus(struct window_pane *wp)
 	}
 
 not_focused:
-	if (wp->flags & PANE_FOCUSED)
+	if (push || (wp->flags & PANE_FOCUSED))
 		bufferevent_write(wp->event, "\033[O", 3);
 	wp->flags &= ~PANE_FOCUSED;
 	return;
 
 focused:
-	if (!(wp->flags & PANE_FOCUSED))
+	if (push || !(wp->flags & PANE_FOCUSED))
 		bufferevent_write(wp->event, "\033[I", 3);
 	wp->flags |= PANE_FOCUSED;
 }
@@ -629,7 +647,7 @@ server_client_reset_state(struct client *c)
 	if (!window_pane_visible(wp) || wp->yoff + s->cy >= c->tty.sy - status)
 		tty_cursor(&c->tty, 0, 0);
 	else {
-		o = status && options_get_number (oo, "status-position") == 0;
+		o = status && options_get_number(oo, "status-position") == 0;
 		tty_cursor(&c->tty, wp->xoff + s->cx, o + wp->yoff + s->cy);
 	}
 
@@ -639,7 +657,7 @@ server_client_reset_state(struct client *c)
 	 */
 	mode = s->mode;
 	if ((c->tty.mouse.flags & MOUSE_RESIZE_PANE) &&
-	    !(mode & (MODE_MOUSE_BUTTON|MODE_MOUSE_ANY)))
+	    !(mode & MODE_MOUSE_BUTTON))
 		mode |= MODE_MOUSE_BUTTON;
 
 	/*
@@ -693,8 +711,6 @@ server_client_repeat_timer(unused int fd, unused short events, void *data)
 void
 server_client_check_exit(struct client *c)
 {
-	struct msg_exit_data	exitdata;
-
 	if (!(c->flags & CLIENT_EXIT))
 		return;
 
@@ -705,9 +721,7 @@ server_client_check_exit(struct client *c)
 	if (EVBUFFER_LENGTH(c->stderr_data) != 0)
 		return;
 
-	exitdata.retcode = c->retcode;
-	server_write_client(c, MSG_EXIT, &exitdata, sizeof exitdata);
-
+	server_write_client(c, MSG_EXIT, &c->retval, sizeof c->retval);
 	c->flags &= ~CLIENT_EXIT;
 }
 
@@ -740,7 +754,7 @@ server_client_check_redraw(struct client *c)
 	}
 
 	if (c->flags & CLIENT_REDRAW) {
-		screen_redraw_screen(c, 0, 0);
+		screen_redraw_screen(c, 1, 1, 1);
 		c->flags &= ~(CLIENT_STATUS|CLIENT_BORDERS);
 	} else if (c->flags & CLIENT_REDRAWWINDOW) {
 		TAILQ_FOREACH(wp, &c->session->curw->window->panes, entry)
@@ -754,10 +768,10 @@ server_client_check_redraw(struct client *c)
 	}
 
 	if (c->flags & CLIENT_BORDERS)
-		screen_redraw_screen(c, 0, 1);
+		screen_redraw_screen(c, 0, 0, 1);
 
 	if (c->flags & CLIENT_STATUS)
-		screen_redraw_screen(c, 1, 0);
+		screen_redraw_screen(c, 0, 1, 0);
 
 	c->tty.flags |= flags;
 
@@ -768,19 +782,25 @@ server_client_check_redraw(struct client *c)
 void
 server_client_set_title(struct client *c)
 {
-	struct session	*s = c->session;
-	const char	*template;
-	char		*title;
+	struct session		*s = c->session;
+	const char		*template;
+	char			*title;
+	struct format_tree	*ft;
 
 	template = options_get_string(&s->options, "set-titles-string");
 
-	title = status_replace(c, NULL, NULL, NULL, template, time(NULL), 1);
+	ft = format_create();
+	format_defaults(ft, c, NULL, NULL, NULL);
+
+	title = format_expand_time(ft, template, time(NULL));
 	if (c->title == NULL || strcmp(title, c->title) != 0) {
 		free(c->title);
 		c->title = xstrdup(title);
 		tty_set_title(&c->tty, c->title);
 	}
 	free(title);
+
+	format_free(ft);
 }
 
 /* Dispatch message from client. */
@@ -788,10 +808,8 @@ int
 server_client_msg_dispatch(struct client *c)
 {
 	struct imsg		 imsg;
-	struct msg_command_data	 commanddata;
-	struct msg_identify_data identifydata;
-	struct msg_environ_data	 environdata;
 	struct msg_stdin_data	 stdindata;
+	const char		*data;
 	ssize_t			 n, datalen;
 
 	if ((n = imsg_read(&c->ibuf)) == -1 || n == 0)
@@ -802,37 +820,37 @@ server_client_msg_dispatch(struct client *c)
 			return (-1);
 		if (n == 0)
 			return (0);
+
+		data = imsg.data;
 		datalen = imsg.hdr.len - IMSG_HEADER_SIZE;
 
 		if (imsg.hdr.peerid != PROTOCOL_VERSION) {
 			server_write_client(c, MSG_VERSION, NULL, 0);
 			c->flags |= CLIENT_BAD;
+			if (imsg.fd != -1)
+				close(imsg.fd);
 			imsg_free(&imsg);
 			continue;
 		}
 
 		log_debug("got %d from client %d", imsg.hdr.type, c->ibuf.fd);
 		switch (imsg.hdr.type) {
-		case MSG_COMMAND:
-			if (datalen != sizeof commanddata)
-				fatalx("bad MSG_COMMAND size");
-			memcpy(&commanddata, imsg.data, sizeof commanddata);
-
-			server_client_msg_command(c, &commanddata);
+		case MSG_IDENTIFY_FLAGS:
+		case MSG_IDENTIFY_TERM:
+		case MSG_IDENTIFY_TTYNAME:
+		case MSG_IDENTIFY_CWD:
+		case MSG_IDENTIFY_STDIN:
+		case MSG_IDENTIFY_ENVIRON:
+		case MSG_IDENTIFY_DONE:
+			server_client_msg_identify(c, &imsg);
 			break;
-		case MSG_IDENTIFY:
-			if (datalen != sizeof identifydata)
-				fatalx("bad MSG_IDENTIFY size");
-			if (imsg.fd == -1)
-				fatalx("MSG_IDENTIFY missing fd");
-			memcpy(&identifydata, imsg.data, sizeof identifydata);
-
-			server_client_msg_identify(c, &identifydata, imsg.fd);
+		case MSG_COMMAND:
+			server_client_msg_command(c, &imsg);
 			break;
 		case MSG_STDIN:
 			if (datalen != sizeof stdindata)
 				fatalx("bad MSG_STDIN size");
-			memcpy(&stdindata, imsg.data, sizeof stdindata);
+			memcpy(&stdindata, data, sizeof stdindata);
 
 			if (c->stdin_callback == NULL)
 				break;
@@ -873,6 +891,9 @@ server_client_msg_dispatch(struct client *c)
 				break;
 			c->flags &= ~CLIENT_SUSPENDED;
 
+			if (c->tty.fd == -1) /* exited in the meantime */
+				break;
+
 			if (gettimeofday(&c->activity_time, NULL) != 0)
 				fatal("gettimeofday");
 			if (c->session != NULL)
@@ -882,23 +903,12 @@ server_client_msg_dispatch(struct client *c)
 			server_redraw_client(c);
 			recalculate_sizes();
 			break;
-		case MSG_ENVIRON:
-			if (datalen != sizeof environdata)
-				fatalx("bad MSG_ENVIRON size");
-			memcpy(&environdata, imsg.data, sizeof environdata);
-
-			environdata.var[(sizeof environdata.var) - 1] = '\0';
-			if (strchr(environdata.var, '=') != NULL)
-				environ_put(&c->environ, environdata.var);
-			break;
 		case MSG_SHELL:
 			if (datalen != 0)
 				fatalx("bad MSG_SHELL size");
 
 			server_client_msg_shell(c);
 			break;
-		default:
-			fatalx("unexpected message");
 		}
 
 		imsg_free(&imsg);
@@ -907,15 +917,26 @@ server_client_msg_dispatch(struct client *c)
 
 /* Handle command message. */
 void
-server_client_msg_command(struct client *c, struct msg_command_data *data)
+server_client_msg_command(struct client *c, struct imsg *imsg)
 {
-	struct cmd_list	*cmdlist = NULL;
-	int		 argc;
-	char	       **argv, *cause;
+	struct msg_command_data	  data;
+	char			 *buf;
+	size_t			  len;
+	struct cmd_list		 *cmdlist = NULL;
+	int			  argc;
+	char			**argv, *cause;
 
-	argc = data->argc;
-	data->argv[(sizeof data->argv) - 1] = '\0';
-	if (cmd_unpack_argv(data->argv, sizeof data->argv, argc, &argv) != 0) {
+	if (imsg->hdr.len - IMSG_HEADER_SIZE < sizeof data)
+		fatalx("bad MSG_COMMAND size");
+	memcpy(&data, imsg->data, sizeof data);
+
+	buf = (char *)imsg->data + sizeof data;
+	len = imsg->hdr.len  - IMSG_HEADER_SIZE - sizeof data;
+	if (len > 0 && buf[len - 1] != '\0')
+		fatalx("bad MSG_COMMAND string");
+
+	argc = data.argc;
+	if (cmd_unpack_argv(buf, len, argc, &argv) != 0) {
 		cmdq_error(c->cmdq, "command too long");
 		goto error;
 	}
@@ -933,7 +954,10 @@ server_client_msg_command(struct client *c, struct msg_command_data *data)
 	}
 	cmd_free_argv(argc, argv);
 
-	cmdq_run(c->cmdq, cmdlist);
+	if (c != cfg_client || cfg_finished)
+		cmdq_run(c->cmdq, cmdlist);
+	else
+		cmdq_append(c->cmdq, cmdlist);
 	cmd_list_free(cmdlist);
 	return;
 
@@ -946,46 +970,99 @@ error:
 
 /* Handle identify message. */
 void
-server_client_msg_identify(
-    struct client *c, struct msg_identify_data *data, int fd)
+server_client_msg_identify(struct client *c, struct imsg *imsg)
 {
-	c->cwd = NULL;
-	data->cwd[(sizeof data->cwd) - 1] = '\0';
-	if (*data->cwd != '\0')
-		c->cwd = xstrdup(data->cwd);
+	const char	*data;
+	size_t	 	 datalen;
+	int		 flags;
 
-	if (data->flags & IDENTIFY_CONTROL) {
+	if (c->flags & CLIENT_IDENTIFIED)
+		fatalx("out-of-order identify message");
+
+	data = imsg->data;
+	datalen = imsg->hdr.len - IMSG_HEADER_SIZE;
+
+	switch (imsg->hdr.type)	{
+	case MSG_IDENTIFY_FLAGS:
+		if (datalen != sizeof flags)
+			fatalx("bad MSG_IDENTIFY_FLAGS size");
+		memcpy(&flags, data, sizeof flags);
+		c->flags |= flags;
+		break;
+	case MSG_IDENTIFY_TERM:
+		if (datalen == 0 || data[datalen - 1] != '\0')
+			fatalx("bad MSG_IDENTIFY_TERM string");
+		c->term = xstrdup(data);
+		break;
+	case MSG_IDENTIFY_TTYNAME:
+		if (datalen == 0 || data[datalen - 1] != '\0')
+			fatalx("bad MSG_IDENTIFY_TTYNAME string");
+		c->ttyname = xstrdup(data);
+		break;
+	case MSG_IDENTIFY_CWD:
+		if (datalen != 0)
+			fatalx("bad MSG_IDENTIFY_CWD size");
+		c->cwd = imsg->fd;
+		break;
+	case MSG_IDENTIFY_STDIN:
+		if (datalen != 0)
+			fatalx("bad MSG_IDENTIFY_STDIN size");
+		c->fd = imsg->fd;
+		break;
+	case MSG_IDENTIFY_ENVIRON:
+		if (datalen == 0 || data[datalen - 1] != '\0')
+			fatalx("bad MSG_IDENTIFY_ENVIRON string");
+		if (strchr(data, '=') != NULL)
+			environ_put(&c->environ, data);
+		break;
+	default:
+		break;
+	}
+
+	if (imsg->hdr.type != MSG_IDENTIFY_DONE)
+		return;
+	c->flags |= CLIENT_IDENTIFIED;
+
+#ifdef __CYGWIN__
+	c->fd = open(c->ttyname, O_RDWR|O_NOCTTY);
+	c->cwd = open(".", O_RDONLY);
+#endif
+
+	if (c->flags & CLIENT_CONTROL) {
 		c->stdin_callback = control_callback;
+
 		evbuffer_free(c->stderr_data);
 		c->stderr_data = c->stdout_data;
-		c->flags |= CLIENT_CONTROL;
-		if (data->flags & IDENTIFY_TERMIOS)
+
+		if (c->flags & CLIENT_CONTROLCONTROL)
 			evbuffer_add_printf(c->stdout_data, "\033P1000p");
 		server_write_client(c, MSG_STDIN, NULL, 0);
 
 		c->tty.fd = -1;
 		c->tty.log_fd = -1;
 
-		close(fd);
+		close(c->fd);
+		c->fd = -1;
+
 		return;
 	}
 
-	if (!isatty(fd)) {
-		close(fd);
+	if (c->fd == -1)
+		return;
+	if (!isatty(c->fd)) {
+		close(c->fd);
+		c->fd = -1;
 		return;
 	}
-	data->term[(sizeof data->term) - 1] = '\0';
-	tty_init(&c->tty, c, fd, data->term);
-	if (data->flags & IDENTIFY_UTF8)
+	tty_init(&c->tty, c, c->fd, c->term);
+	if (c->flags & CLIENT_UTF8)
 		c->tty.flags |= TTY_UTF8;
-	if (data->flags & IDENTIFY_256COLOURS)
+	if (c->flags & CLIENT_256COLOURS)
 		c->tty.term_flags |= TERM_256COLOURS;
-	else if (data->flags & IDENTIFY_88COLOURS)
-		c->tty.term_flags |= TERM_88COLOURS;
 
 	tty_resize(&c->tty);
 
-	if (!(data->flags & IDENTIFY_CONTROL))
+	if (!(c->flags & CLIENT_CONTROL))
 		c->flags |= CLIENT_TERMINAL;
 }
 
@@ -993,16 +1070,12 @@ server_client_msg_identify(
 void
 server_client_msg_shell(struct client *c)
 {
-	struct msg_shell_data	 data;
-	const char		*shell;
+	const char	*shell;
 
 	shell = options_get_string(&global_s_options, "default-shell");
-
 	if (*shell == '\0' || areshell(shell))
 		shell = _PATH_BSHELL;
-	if (strlcpy(data.shell, shell, sizeof data.shell) >= sizeof data.shell)
-		strlcpy(data.shell, _PATH_BSHELL, sizeof data.shell);
+	server_write_client(c, MSG_SHELL, shell, strlen(shell) + 1);
 
-	server_write_client(c, MSG_SHELL, &data, sizeof data);
 	c->flags |= CLIENT_BAD;	/* it will die after exec */
 }

@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -27,33 +27,17 @@
  * Bind a key to a command, this recurses through cmd_*.
  */
 
-enum cmd_retval	 cmd_bind_key_check(struct args *);
 enum cmd_retval	 cmd_bind_key_exec(struct cmd *, struct cmd_q *);
 
-enum cmd_retval	 cmd_bind_key_table(struct cmd *, struct cmd_q *, int);
+enum cmd_retval	 cmd_bind_key_mode_table(struct cmd *, struct cmd_q *, int);
 
 const struct cmd_entry cmd_bind_key_entry = {
 	"bind-key", "bind",
 	"cnrt:", 1, -1,
-	"[-cnr] [-t key-table] key command [arguments]",
+	"[-cnr] [-t mode-table] key command [arguments]",
 	0,
-	NULL,
-	cmd_bind_key_check,
 	cmd_bind_key_exec
 };
-
-enum cmd_retval
-cmd_bind_key_check(struct args *args)
-{
-	if (args_has(args, 't')) {
-		if (args->argc != 2 && args->argc != 3)
-			return (CMD_RETURN_ERROR);
-	} else {
-		if (args->argc < 2)
-			return (CMD_RETURN_ERROR);
-	}
-	return (CMD_RETURN_NORMAL);
-}
 
 enum cmd_retval
 cmd_bind_key_exec(struct cmd *self, struct cmd_q *cmdq)
@@ -63,6 +47,18 @@ cmd_bind_key_exec(struct cmd *self, struct cmd_q *cmdq)
 	struct cmd_list	*cmdlist;
 	int		 key;
 
+	if (args_has(args, 't')) {
+		if (args->argc != 2 && args->argc != 3) {
+			cmdq_error(cmdq, "not enough arguments");
+			return (CMD_RETURN_ERROR);
+		}
+	} else {
+		if (args->argc < 2) {
+			cmdq_error(cmdq, "not enough arguments");
+			return (CMD_RETURN_ERROR);
+		}
+	}
+
 	key = key_string_lookup_string(args->argv[0]);
 	if (key == KEYC_NONE) {
 		cmdq_error(cmdq, "unknown key: %s", args->argv[0]);
@@ -70,7 +66,7 @@ cmd_bind_key_exec(struct cmd *self, struct cmd_q *cmdq)
 	}
 
 	if (args_has(args, 't'))
-		return (cmd_bind_key_table(self, cmdq, key));
+		return (cmd_bind_key_mode_table(self, cmdq, key));
 
 	cmdlist = cmd_list_parse(args->argc - 1, args->argv + 1, NULL, 0,
 	    &cause);
@@ -87,7 +83,7 @@ cmd_bind_key_exec(struct cmd *self, struct cmd_q *cmdq)
 }
 
 enum cmd_retval
-cmd_bind_key_table(struct cmd *self, struct cmd_q *cmdq, int key)
+cmd_bind_key_mode_table(struct cmd *self, struct cmd_q *cmdq, int key)
 {
 	struct args			*args = self->args;
 	const char			*tablename;

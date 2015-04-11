@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -18,7 +18,8 @@
 
 #include <sys/types.h>
 
-#include <pwd.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
@@ -30,45 +31,56 @@
  * Create a new session and attach to the current terminal unless -d is given.
  */
 
-enum cmd_retval	 cmd_new_session_check(struct args *);
+#define NEW_SESSION_TEMPLATE "#{session_name}:"
+
 enum cmd_retval	 cmd_new_session_exec(struct cmd *, struct cmd_q *);
 
 const struct cmd_entry cmd_new_session_entry = {
 	"new-session", "new",
-	"AdDF:n:Ps:t:x:y:", 0, 1,
-	"[-AdDP] [-F format] [-n window-name] [-s session-name] "
-	CMD_TARGET_SESSION_USAGE " [-x width] [-y height] [command]",
-	CMD_STARTSERVER|CMD_CANTNEST|CMD_SENDENVIRON,
-	NULL,
-	cmd_new_session_check,
+	"Ac:dDF:n:Ps:t:x:y:", 0, -1,
+	"[-AdDP] [-c start-directory] [-F format] [-n window-name] "
+	"[-s session-name] " CMD_TARGET_SESSION_USAGE " [-x width] "
+	"[-y height] [command]",
+	CMD_STARTSERVER|CMD_CANTNEST,
 	cmd_new_session_exec
 };
 
-enum cmd_retval
-cmd_new_session_check(struct args *args)
-{
-	if (args_has(args, 't') && (args->argc != 0 || args_has(args, 'n')))
-		return (CMD_RETURN_ERROR);
-	return (CMD_RETURN_NORMAL);
-}
+const struct cmd_entry cmd_has_session_entry = {
+	"has-session", "has",
+	"t:", 0, 0,
+	CMD_TARGET_SESSION_USAGE,
+	0,
+	cmd_new_session_exec
+};
 
 enum cmd_retval
 cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 {
 	struct args		*args = self->args;
-	struct client		*c = cmdq->client;
+	struct client		*c = cmdq->client, *c0;
 	struct session		*s, *groupwith;
 	struct window		*w;
 	struct environ		 env;
 	struct termios		 tio, *tiop;
-	struct passwd		*pw;
-	const char		*newname, *target, *update, *cwd, *errstr;
-	const char		*template;
-	char			*cmd, *cause, *cp;
-	int			 detached, idx;
+	const char		*newname, *target, *update, *errstr, *template;
+	const char		*path;
+	char		       **argv, *cmd, *cause, *cp;
+	int			 detached, already_attached, idx, cwd, fd = -1;
+	int			 argc;
 	u_int			 sx, sy;
-	int			 already_attached;
 	struct format_tree	*ft;
+	struct environ_entry	*envent;
+
+	if (self->entry == &cmd_has_session_entry) {
+		if (cmd_find_session(cmdq, args_get(args, 't'), 0) == NULL)
+			return (CMD_RETURN_ERROR);
+		return (CMD_RETURN_NORMAL);
+	}
+
+	if (args_has(args, 't') && (args->argc != 0 || args_has(args, 'n'))) {
+		cmdq_error(cmdq, "command or window name given with target");
+		return (CMD_RETURN_ERROR);
+	}
 
 	newname = args_get(args, 's');
 	if (newname != NULL) {
@@ -79,7 +91,7 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 		if (session_find(newname) != NULL) {
 			if (args_has(args, 'A')) {
 				return (cmd_attach_session(cmdq, newname,
-				    args_has(args, 'D'), 0));
+				    args_has(args, 'D'), 0, NULL));
 			}
 			cmdq_error(cmdq, "duplicate session: %s", newname);
 			return (CMD_RETURN_ERROR);
@@ -104,6 +116,34 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 	if (c != NULL && c->session != NULL)
 		already_attached = 1;
 
+	/* Get the new session working directory. */
+	if (args_has(args, 'c')) {
+		ft = format_create();
+		format_defaults(ft, cmd_find_client(cmdq, NULL, 1), NULL, NULL,
+		    NULL);
+		cp = format_expand(ft, args_get(args, 'c'));
+		format_free(ft);
+
+		if (cp != NULL && *cp != '\0') {
+			fd = open(cp, O_RDONLY|O_DIRECTORY);
+			free(cp);
+			if (fd == -1) {
+				cmdq_error(cmdq, "bad working directory: %s",
+				    strerror(errno));
+				return (CMD_RETURN_ERROR);
+			}
+		} else if (cp != NULL)
+			free(cp);
+		cwd = fd;
+	} else if (c != NULL && c->session == NULL)
+		cwd = c->cwd;
+	else if ((c0 = cmd_current_client(cmdq)) != NULL)
+		cwd = c0->session->cwd;
+	else {
+		fd = open(".", O_RDONLY);
+		cwd = fd;
+	}
+
 	/*
 	 * Save the termios settings, part of which is used for new windows in
 	 * this session.
@@ -122,22 +162,11 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 
 	/* Open the terminal if necessary. */
 	if (!detached && !already_attached) {
-		if (server_client_open(c, NULL, &cause) != 0) {
+		if (server_client_open(c, &cause) != 0) {
 			cmdq_error(cmdq, "open terminal failed: %s", cause);
 			free(cause);
-			return (CMD_RETURN_ERROR);
+			goto error;
 		}
-	}
-
-	/* Get the new session working directory. */
-	if (c != NULL && c->cwd != NULL)
-		cwd = c->cwd;
-	else {
-		pw = getpwuid(getuid());
-		if (pw->pw_dir != NULL && *pw->pw_dir != '\0')
-			cwd = pw->pw_dir;
-		else
-			cwd = "/";
 	}
 
 	/* Find new session size. */
@@ -152,14 +181,14 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 		sx = strtonum(args_get(args, 'x'), 1, USHRT_MAX, &errstr);
 		if (errstr != NULL) {
 			cmdq_error(cmdq, "width %s", errstr);
-			return (CMD_RETURN_ERROR);
+			goto error;
 		}
 	}
 	if (detached && args_has(args, 'y')) {
 		sy = strtonum(args_get(args, 'y'), 1, USHRT_MAX, &errstr);
 		if (errstr != NULL) {
 			cmdq_error(cmdq, "height %s", errstr);
-			return (CMD_RETURN_ERROR);
+			goto error;
 		}
 	}
 	if (sy > 0 && options_get_number(&global_s_options, "status"))
@@ -170,12 +199,29 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 		sy = 1;
 
 	/* Figure out the command for the new window. */
-	if (target != NULL)
-		cmd = NULL;
-	else if (args->argc != 0)
-		cmd = args->argv[0];
-	else
+	argc = -1;
+	argv = NULL;
+	if (target == NULL && args->argc != 0) {
+		argc = args->argc;
+		argv = args->argv;
+	} else if (target == NULL) {
 		cmd = options_get_string(&global_s_options, "default-command");
+		if (cmd != NULL && *cmd != '\0') {
+			argc = 1;
+			argv = &cmd;
+		} else {
+			argc = 0;
+			argv = NULL;
+		}
+	}
+
+	path = NULL;
+	if (c != NULL && c->session == NULL)
+		envent = environ_find(&c->environ, "PATH");
+	else
+		envent = environ_find(&global_environ, "PATH");
+	if (envent != NULL)
+		path = envent->value;
 
 	/* Construct the environment. */
 	environ_init(&env);
@@ -185,16 +231,17 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 
 	/* Create the new session. */
 	idx = -1 - options_get_number(&global_s_options, "base-index");
-	s = session_create(newname, cmd, cwd, &env, tiop, idx, sx, sy, &cause);
+	s = session_create(newname, argc, argv, path, cwd, &env, tiop, idx, sx,
+	    sy, &cause);
 	if (s == NULL) {
 		cmdq_error(cmdq, "create session failed: %s", cause);
 		free(cause);
-		return (CMD_RETURN_ERROR);
+		goto error;
 	}
 	environ_free(&env);
 
 	/* Set the initial window name if one given. */
-	if (cmd != NULL && args_has(args, 'n')) {
+	if (argc >= 0 && args_has(args, 'n')) {
 		w = s->curw->window;
 		window_set_name(w, args_get(args, 'n'));
 		options_set_number(&w->options, "automatic-rename", 0);
@@ -240,9 +287,8 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 			template = NEW_SESSION_TEMPLATE;
 
 		ft = format_create();
-		if ((c = cmd_find_client(cmdq, NULL, 1)) != NULL)
-			format_client(ft, c);
-		format_session(ft, s);
+		format_defaults(ft, cmd_find_client(cmdq, NULL, 1), s, NULL,
+		    NULL);
 
 		cp = format_expand(ft, template);
 		cmdq_print(cmdq, "%s", cp);
@@ -253,5 +299,13 @@ cmd_new_session_exec(struct cmd *self, struct cmd_q *cmdq)
 
 	if (!detached)
 		cmdq->client_exit = 0;
+
+	if (fd != -1)
+		close(fd);
 	return (CMD_RETURN_NORMAL);
+
+error:
+	if (fd != -1)
+		close(fd);
+	return (CMD_RETURN_ERROR);
 }

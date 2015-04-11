@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -41,15 +41,13 @@ const struct tty_term_code_entry tty_term_codes[NTTYCODE] = {
 	{ TTYC_BEL, TTYCODE_STRING, "bel" },
 	{ TTYC_BLINK, TTYCODE_STRING, "blink" },
 	{ TTYC_BOLD, TTYCODE_STRING, "bold" },
-	{ TTYC_CC, TTYCODE_STRING, "Cc" },
 	{ TTYC_CIVIS, TTYCODE_STRING, "civis" },
 	{ TTYC_CLEAR, TTYCODE_STRING, "clear" },
 	{ TTYC_CNORM, TTYCODE_STRING, "cnorm" },
 	{ TTYC_COLORS, TTYCODE_NUMBER, "colors" },
 	{ TTYC_CR, TTYCODE_STRING, "Cr" },
-	{ TTYC_CS1, TTYCODE_STRING, "Cs" },
+	{ TTYC_CS, TTYCODE_STRING, "Cs" },
 	{ TTYC_CSR, TTYCODE_STRING, "csr" },
-	{ TTYC_CSR1, TTYCODE_STRING, "Csr" },
 	{ TTYC_CUB, TTYCODE_STRING, "cub" },
 	{ TTYC_CUB1, TTYCODE_STRING, "cub1" },
 	{ TTYC_CUD, TTYCODE_STRING, "cud" },
@@ -59,6 +57,7 @@ const struct tty_term_code_entry tty_term_codes[NTTYCODE] = {
 	{ TTYC_CUP, TTYCODE_STRING, "cup" },
 	{ TTYC_CUU, TTYCODE_STRING, "cuu" },
 	{ TTYC_CUU1, TTYCODE_STRING, "cuu1" },
+	{ TTYC_CVVIS, TTYCODE_STRING, "cvvis" },
 	{ TTYC_DCH, TTYCODE_STRING, "dch" },
 	{ TTYC_DCH1, TTYCODE_STRING, "dch1" },
 	{ TTYC_DIM, TTYCODE_STRING, "dim" },
@@ -118,10 +117,53 @@ const struct tty_term_code_entry tty_term_codes[NTTYCODE] = {
 	{ TTYC_KF19, TTYCODE_STRING, "kf19" },
 	{ TTYC_KF2, TTYCODE_STRING, "kf2" },
 	{ TTYC_KF20, TTYCODE_STRING, "kf20" },
+	{ TTYC_KF21, TTYCODE_STRING, "kf21" },
+	{ TTYC_KF22, TTYCODE_STRING, "kf22" },
+	{ TTYC_KF23, TTYCODE_STRING, "kf23" },
+	{ TTYC_KF24, TTYCODE_STRING, "kf24" },
+	{ TTYC_KF25, TTYCODE_STRING, "kf25" },
+	{ TTYC_KF26, TTYCODE_STRING, "kf26" },
+	{ TTYC_KF27, TTYCODE_STRING, "kf27" },
+	{ TTYC_KF28, TTYCODE_STRING, "kf28" },
+	{ TTYC_KF29, TTYCODE_STRING, "kf29" },
 	{ TTYC_KF3, TTYCODE_STRING, "kf3" },
+	{ TTYC_KF30, TTYCODE_STRING, "kf30" },
+	{ TTYC_KF31, TTYCODE_STRING, "kf31" },
+	{ TTYC_KF32, TTYCODE_STRING, "kf32" },
+	{ TTYC_KF33, TTYCODE_STRING, "kf33" },
+	{ TTYC_KF34, TTYCODE_STRING, "kf34" },
+	{ TTYC_KF35, TTYCODE_STRING, "kf35" },
+	{ TTYC_KF36, TTYCODE_STRING, "kf36" },
+	{ TTYC_KF37, TTYCODE_STRING, "kf37" },
+	{ TTYC_KF38, TTYCODE_STRING, "kf38" },
+	{ TTYC_KF39, TTYCODE_STRING, "kf39" },
 	{ TTYC_KF4, TTYCODE_STRING, "kf4" },
+	{ TTYC_KF40, TTYCODE_STRING, "kf40" },
+	{ TTYC_KF41, TTYCODE_STRING, "kf41" },
+	{ TTYC_KF42, TTYCODE_STRING, "kf42" },
+	{ TTYC_KF43, TTYCODE_STRING, "kf43" },
+	{ TTYC_KF44, TTYCODE_STRING, "kf44" },
+	{ TTYC_KF45, TTYCODE_STRING, "kf45" },
+	{ TTYC_KF46, TTYCODE_STRING, "kf46" },
+	{ TTYC_KF47, TTYCODE_STRING, "kf47" },
+	{ TTYC_KF48, TTYCODE_STRING, "kf48" },
+	{ TTYC_KF49, TTYCODE_STRING, "kf49" },
 	{ TTYC_KF5, TTYCODE_STRING, "kf5" },
+	{ TTYC_KF50, TTYCODE_STRING, "kf50" },
+	{ TTYC_KF51, TTYCODE_STRING, "kf51" },
+	{ TTYC_KF52, TTYCODE_STRING, "kf52" },
+	{ TTYC_KF53, TTYCODE_STRING, "kf53" },
+	{ TTYC_KF54, TTYCODE_STRING, "kf54" },
+	{ TTYC_KF55, TTYCODE_STRING, "kf55" },
+	{ TTYC_KF56, TTYCODE_STRING, "kf56" },
+	{ TTYC_KF57, TTYCODE_STRING, "kf57" },
+	{ TTYC_KF58, TTYCODE_STRING, "kf58" },
+	{ TTYC_KF59, TTYCODE_STRING, "kf59" },
 	{ TTYC_KF6, TTYCODE_STRING, "kf6" },
+	{ TTYC_KF60, TTYCODE_STRING, "kf60" },
+	{ TTYC_KF61, TTYCODE_STRING, "kf61" },
+	{ TTYC_KF62, TTYCODE_STRING, "kf62" },
+	{ TTYC_KF63, TTYCODE_STRING, "kf63" },
 	{ TTYC_KF7, TTYCODE_STRING, "kf7" },
 	{ TTYC_KF8, TTYCODE_STRING, "kf8" },
 	{ TTYC_KF9, TTYCODE_STRING, "kf9" },
@@ -179,6 +221,7 @@ const struct tty_term_code_entry tty_term_codes[NTTYCODE] = {
 	{ TTYC_RMACS, TTYCODE_STRING, "rmacs" },
 	{ TTYC_RMCUP, TTYCODE_STRING, "rmcup" },
 	{ TTYC_RMKX, TTYCODE_STRING, "rmkx" },
+	{ TTYC_SE, TTYCODE_STRING, "Se" },
 	{ TTYC_SETAB, TTYCODE_STRING, "setab" },
 	{ TTYC_SETAF, TTYCODE_STRING, "setaf" },
 	{ TTYC_SGR0, TTYCODE_STRING, "sgr0" },
@@ -188,6 +231,7 @@ const struct tty_term_code_entry tty_term_codes[NTTYCODE] = {
 	{ TTYC_SMKX, TTYCODE_STRING, "smkx" },
 	{ TTYC_SMSO, TTYCODE_STRING, "smso" },
 	{ TTYC_SMUL, TTYCODE_STRING, "smul" },
+	{ TTYC_SS, TTYCODE_STRING, "Ss" },
 	{ TTYC_TSL, TTYCODE_STRING, "tsl" },
 	{ TTYC_VPA, TTYCODE_STRING, "vpa" },
 	{ TTYC_XENL, TTYCODE_FLAG, "xenl" },
@@ -308,7 +352,7 @@ tty_term_override(struct tty_term *term, const char *overrides)
 }
 
 struct tty_term *
-tty_term_find(char *name, int fd, const char *overrides, char **cause)
+tty_term_find(char *name, int fd, char **cause)
 {
 	struct tty_term				*term;
 	const struct tty_term_code_entry	*ent;
@@ -386,7 +430,10 @@ tty_term_find(char *name, int fd, const char *overrides, char **cause)
 			break;
 		}
 	}
-	tty_term_override(term, overrides);
+
+	/* Apply terminal overrides. */
+	s = options_get_string(&global_options, "terminal-overrides");
+	tty_term_override(term, s);
 
 	/* Delete curses data. */
 #if !defined(NCURSES_VERSION_MAJOR) || NCURSES_VERSION_MAJOR > 5 || \
@@ -410,11 +457,9 @@ tty_term_find(char *name, int fd, const char *overrides, char **cause)
 		goto error;
 	}
 
-	/* Figure out if we have 256 or 88 colours. */
+	/* Figure out if we have 256. */
 	if (tty_term_number(term, TTYC_COLORS) == 256)
 		term->flags |= TERM_256COLOURS;
-	if (tty_term_number(term, TTYC_COLORS) == 88)
-		term->flags |= TERM_88COLOURS;
 
 	/*
 	 * Terminals without xenl (eat newline glitch) wrap at at $COLUMNS - 1
@@ -511,7 +556,8 @@ tty_term_ptr1(struct tty_term *term, enum tty_code_code code, const void *a)
 }
 
 const char *
-tty_term_ptr2(struct tty_term *term, enum tty_code_code code, const void *a, const void *b)
+tty_term_ptr2(struct tty_term *term, enum tty_code_code code, const void *a,
+    const void *b)
 {
 	return (tparm((char *) tty_term_string(term, code), a, b, 0, 0, 0, 0, 0, 0, 0));
 }

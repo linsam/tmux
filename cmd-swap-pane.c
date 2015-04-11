@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -26,7 +26,6 @@
  * Swap two panes.
  */
 
-void		 cmd_swap_pane_key_binding(struct cmd *, int);
 enum cmd_retval	 cmd_swap_pane_exec(struct cmd *, struct cmd_q *);
 
 const struct cmd_entry cmd_swap_pane_entry = {
@@ -34,20 +33,8 @@ const struct cmd_entry cmd_swap_pane_entry = {
 	"dDs:t:U", 0, 0,
 	"[-dDU] " CMD_SRCDST_PANE_USAGE,
 	0,
-	cmd_swap_pane_key_binding,
-	NULL,
 	cmd_swap_pane_exec
 };
-
-void
-cmd_swap_pane_key_binding(struct cmd *self, int key)
-{
-	self->args = args_create(0);
-	if (key == '{')
-		args_set(self->args, 'U', NULL);
-	else if (key == '}')
-		args_set(self->args, 'D', NULL);
-}
 
 enum cmd_retval
 cmd_swap_pane_exec(struct cmd *self, struct cmd_q *cmdq)
@@ -75,8 +62,12 @@ cmd_swap_pane_exec(struct cmd *self, struct cmd_q *cmdq)
 			src_wp = TAILQ_PREV(dst_wp, window_panes, entry);
 			if (src_wp == NULL)
 				src_wp = TAILQ_LAST(&dst_w->panes, window_panes);
-		} else
-			return (CMD_RETURN_NORMAL);
+		} else {
+			src_wl = cmd_find_pane(cmdq, NULL, NULL, &src_wp);
+			if (src_wl == NULL)
+				return (CMD_RETURN_ERROR);
+			src_w = src_wl->window;
+		}
 	} else {
 		src_wl = cmd_find_pane(cmdq, args_get(args, 's'), NULL, &src_wp);
 		if (src_wl == NULL)

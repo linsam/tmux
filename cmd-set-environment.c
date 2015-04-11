@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -34,8 +34,6 @@ const struct cmd_entry cmd_set_environment_entry = {
 	"grt:u", 1, 2,
 	"[-gru] " CMD_TARGET_SESSION_USAGE " name [value]",
 	0,
-	NULL,
-	NULL,
 	cmd_set_environment_exec
 };
 

@@ -30,6 +30,10 @@
 #define __packed __attribute__ ((__packed__))
 #endif
 
+#ifndef ECHOPRT
+#define ECHOPRT 0
+#endif
+
 #ifndef HAVE_BSD_TYPES
 typedef uint8_t u_int8_t;
 typedef uint16_t u_int16_t;
@@ -121,6 +125,10 @@ typedef uint64_t u_int64_t;
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 #endif
 
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
+#endif
+
 #ifndef INFTIM
 #define INFTIM -1
 #endif
@@ -152,8 +160,31 @@ typedef uint64_t u_int64_t;
 	} while (0)
 #endif
 
+#ifndef timersub
+#define timersub(tvp, uvp, vvp)                                         \
+	do {                                                            \
+		(vvp)->tv_sec = (tvp)->tv_sec - (uvp)->tv_sec;          \
+		(vvp)->tv_usec = (tvp)->tv_usec - (uvp)->tv_usec;       \
+		if ((vvp)->tv_usec < 0) {                               \
+			(vvp)->tv_sec--;                                \
+			(vvp)->tv_usec += 1000000;                      \
+		}                                                       \
+	} while (0)
+#endif
+
 #ifndef TTY_NAME_MAX
 #define TTY_NAME_MAX 32
+#endif
+
+#ifndef HOST_NAME_MAX
+#define HOST_NAME_MAX 255
+#endif
+
+#ifndef HAVE_FLOCK
+#define LOCK_SH 0
+#define LOCK_EX 0
+#define LOCK_NB 0
+#define flock(fd, op) (0)
 #endif
 
 #ifndef HAVE_BZERO
@@ -198,6 +229,7 @@ int	 	 daemon(int, int);
 
 #ifndef HAVE_B64_NTOP
 /* b64_ntop.c */
+#undef b64_ntop /* for Cygwin */
 int		 b64_ntop(const char *, size_t, char *, size_t);
 #endif
 
@@ -218,10 +250,25 @@ int		 vasprintf(char **, const char *, va_list);
 char		*fgetln(FILE *, size_t *);
 #endif
 
+#ifndef HAVE_FPARSELN
+char		*fparseln(FILE *, size_t *, size_t *, const char *, int);
+#endif
+
 #ifndef HAVE_SETENV
 /* setenv.c */
 int		 setenv(const char *, const char *, int);
 int		 unsetenv(const char *);
+#endif
+
+#ifndef HAVE_CFMAKERAW
+/* cfmakeraw.c */
+void		cfmakeraw(struct termios *);
+#endif
+
+#ifndef HAVE_OPENAT
+/* openat.c */
+#define AT_FDCWD -100
+int		openat(int, const char *, int, ...);
 #endif
 
 #ifdef HAVE_GETOPT

@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -35,7 +35,6 @@ void	tty_read_callback(struct bufferevent *, void *);
 void	tty_error_callback(struct bufferevent *, short, void *);
 
 int	tty_try_256(struct tty *, u_char, const char *);
-int	tty_try_88(struct tty *, u_char, const char *);
 
 void	tty_colours(struct tty *, const struct grid_cell *);
 void	tty_check_fg(struct tty *, struct grid_cell *);
@@ -129,7 +128,7 @@ tty_set_size(struct tty *tty, u_int sx, u_int sy) {
 }
 
 int
-tty_open(struct tty *tty, const char *overrides, char **cause)
+tty_open(struct tty *tty, char **cause)
 {
 	char	out[64];
 	int	fd;
@@ -142,7 +141,7 @@ tty_open(struct tty *tty, const char *overrides, char **cause)
 		tty->log_fd = fd;
 	}
 
-	tty->term = tty_term_find(tty->termname, tty->fd, overrides, cause);
+	tty->term = tty_term_find(tty->termname, tty->fd, cause);
 	if (tty->term == NULL) {
 		tty_close(tty);
 		return (-1);
@@ -194,7 +193,7 @@ tty_init_termios(int fd, struct termios *orig_tio, struct bufferevent *bufev)
 	tio.c_iflag |= IGNBRK;
 	tio.c_oflag &= ~(OPOST|ONLCR|OCRNL|ONLRET);
 	tio.c_lflag &= ~(IEXTEN|ICANON|ECHO|ECHOE|ECHONL|ECHOCTL|
-	    ECHOPRT|ECHOKE|ECHOCTL|ISIG);
+	    ECHOPRT|ECHOKE|ISIG);
 	tio.c_cc[VMIN] = 1;
 	tio.c_cc[VTIME] = 0;
 	if (tcsetattr(fd, TCSANOW, &tio) == 0)
@@ -220,8 +219,13 @@ tty_start_tty(struct tty *tty)
 	if (tty_term_has(tty->term, TTYC_KMOUS))
 		tty_puts(tty, "\033[?1000l\033[?1006l\033[?1005l");
 
-	if (tty_term_has(tty->term, TTYC_XT))
-		tty_puts(tty, "\033[c\033[>4;1m\033[?1004h");
+	if (tty_term_has(tty->term, TTYC_XT)) {
+		if (options_get_number(&global_options, "focus-events")) {
+			tty->flags |= TTY_FOCUS;
+			tty_puts(tty, "\033[?1004h");
+		}
+		tty_puts(tty, "\033[c");
+	}
 
 	tty->cx = UINT_MAX;
 	tty->cy = UINT_MAX;
@@ -271,20 +275,26 @@ tty_stop_tty(struct tty *tty)
 	tty_raw(tty, tty_term_string(tty->term, TTYC_SGR0));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_RMKX));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CLEAR));
-	if (tty_term_has(tty->term, TTYC_CS1) && tty->cstyle != 0) {
-		if (tty_term_has(tty->term, TTYC_CSR1))
-			tty_raw(tty, tty_term_string(tty->term, TTYC_CSR1));
+	if (tty_term_has(tty->term, TTYC_SS) && tty->cstyle != 0) {
+		if (tty_term_has(tty->term, TTYC_SE))
+			tty_raw(tty, tty_term_string(tty->term, TTYC_SE));
 		else
-			tty_raw(tty, tty_term_string1(tty->term, TTYC_CS1, 0));
+			tty_raw(tty, tty_term_string1(tty->term, TTYC_SS, 0));
 	}
+	if (tty->mode & MODE_BRACKETPASTE)
+		tty_raw(tty, "\033[?2004l");
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CR));
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CNORM));
 	if (tty_term_has(tty->term, TTYC_KMOUS))
 		tty_raw(tty, "\033[?1000l\033[?1006l\033[?1005l");
 
-	if (tty_term_has(tty->term, TTYC_XT))
-		tty_raw(tty, "\033[>4m\033[?1004l");
+	if (tty_term_has(tty->term, TTYC_XT)) {
+		if (tty->flags & TTY_FOCUS) {
+			tty->flags &= ~TTY_FOCUS;
+			tty_raw(tty, "\033[?1004l");
+		}
+	}
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_RMCUP));
 
@@ -380,7 +390,8 @@ tty_putcode_ptr1(struct tty *tty, enum tty_code_code code, const void *a)
 }
 
 void
-tty_putcode_ptr2(struct tty *tty, enum tty_code_code code, const void *a, const void *b)
+tty_putcode_ptr2(struct tty *tty, enum tty_code_code code, const void *a,
+    const void *b)
 {
 	if (a != NULL && b != NULL)
 		tty_puts(tty, tty_term_ptr2(tty->term, code, a, b));
@@ -456,7 +467,7 @@ tty_force_cursor_colour(struct tty *tty, const char *ccolour)
 	if (*ccolour == '\0')
 		tty_putcode(tty, TTYC_CR);
 	else
-		tty_putcode_ptr1(tty, TTYC_CC, ccolour);
+		tty_putcode_ptr1(tty, TTYC_CS, ccolour);
 	free(tty->ccolour);
 	tty->ccolour = xstrdup(ccolour);
 }
@@ -473,19 +484,23 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 		mode &= ~MODE_CURSOR;
 
 	changed = mode ^ tty->mode;
-	if (changed & MODE_CURSOR) {
-		if (mode & MODE_CURSOR)
-			tty_putcode(tty, TTYC_CNORM);
-		else
+	if (changed & (MODE_CURSOR|MODE_BLINKING)) {
+		if (mode & MODE_CURSOR) {
+			if (mode & MODE_BLINKING &&
+			    tty_term_has(tty->term, TTYC_CVVIS))
+				tty_putcode(tty, TTYC_CVVIS);
+			else
+				tty_putcode(tty, TTYC_CNORM);
+		} else
 			tty_putcode(tty, TTYC_CIVIS);
 	}
 	if (tty->cstyle != s->cstyle) {
-		if (tty_term_has(tty->term, TTYC_CS1)) {
+		if (tty_term_has(tty->term, TTYC_SS)) {
 			if (s->cstyle == 0 &&
-			    tty_term_has(tty->term, TTYC_CSR1))
-				tty_putcode(tty, TTYC_CSR1);
+			    tty_term_has(tty->term, TTYC_SE))
+				tty_putcode(tty, TTYC_SE);
 			else
-				tty_putcode1(tty, TTYC_CS1, s->cstyle);
+				tty_putcode1(tty, TTYC_SS, s->cstyle);
 		}
 		tty->cstyle = s->cstyle;
 	}
@@ -504,16 +519,12 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 				tty_puts(tty, "\033[?1005l");
 			tty_puts(tty, "\033[?1006h");
 
-			if (mode & MODE_MOUSE_ANY)
-				tty_puts(tty, "\033[?1003h");
-			else if (mode & MODE_MOUSE_BUTTON)
+			if (mode & MODE_MOUSE_BUTTON)
 				tty_puts(tty, "\033[?1002h");
 			else if (mode & MODE_MOUSE_STANDARD)
 				tty_puts(tty, "\033[?1000h");
 		} else {
-			if (tty->mode & MODE_MOUSE_ANY)
-				tty_puts(tty, "\033[?1003l");
-			else if (tty->mode & MODE_MOUSE_BUTTON)
+			if (tty->mode & MODE_MOUSE_BUTTON)
 				tty_puts(tty, "\033[?1002l");
 			else if (tty->mode & MODE_MOUSE_STANDARD)
 				tty_puts(tty, "\033[?1000l");
@@ -539,8 +550,8 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 }
 
 void
-tty_emulate_repeat(
-    struct tty *tty, enum tty_code_code code, enum tty_code_code code1, u_int n)
+tty_emulate_repeat(struct tty *tty, enum tty_code_code code,
+    enum tty_code_code code1, u_int n)
 {
 	if (tty_term_has(tty->term, code))
 		tty_putcode1(tty, code, n);
@@ -1346,8 +1357,7 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc)
 		tty_putcode(tty, TTYC_BOLD);
 	if (changed & GRID_ATTR_DIM)
 		tty_putcode(tty, TTYC_DIM);
-	if (changed & GRID_ATTR_ITALICS)
-	{
+	if (changed & GRID_ATTR_ITALICS) {
 		if (tty_term_has(tty->term, TTYC_SITM))
 			tty_putcode(tty, TTYC_SITM);
 		else
@@ -1446,9 +1456,7 @@ tty_check_fg(struct tty *tty, struct grid_cell *gc)
 	/* Is this a 256-colour colour? */
 	if (gc->flags & GRID_FLAG_FG256) {
 		/* And not a 256 colour mode? */
-		if (!(tty->term->flags & TERM_88COLOURS) &&
-		    !(tty->term_flags & TERM_88COLOURS) &&
-		    !(tty->term->flags & TERM_256COLOURS) &&
+		if (!(tty->term->flags & TERM_256COLOURS) &&
 		    !(tty->term_flags & TERM_256COLOURS)) {
 			gc->fg = colour_256to16(gc->fg);
 			if (gc->fg & 8) {
@@ -1481,9 +1489,7 @@ tty_check_bg(struct tty *tty, struct grid_cell *gc)
 		 * palette. Bold background doesn't exist portably, so just
 		 * discard the bold bit if set.
 		 */
-		if (!(tty->term->flags & TERM_88COLOURS) &&
-		    !(tty->term_flags & TERM_88COLOURS) &&
-		    !(tty->term->flags & TERM_256COLOURS) &&
+		if (!(tty->term->flags & TERM_256COLOURS) &&
 		    !(tty->term_flags & TERM_256COLOURS)) {
 			gc->bg = colour_256to16(gc->bg);
 			if (gc->bg & 8)
@@ -1511,10 +1517,8 @@ tty_colours_fg(struct tty *tty, const struct grid_cell *gc)
 
 	/* Is this a 256-colour colour? */
 	if (gc->flags & GRID_FLAG_FG256) {
-		/* Try as 256 colours or translating to 88. */
+		/* Try as 256 colours. */
 		if (tty_try_256(tty, fg, "38") == 0)
-			goto save_fg;
-		if (tty_try_88(tty, fg, "38") == 0)
 			goto save_fg;
 		/* Else already handled by tty_check_fg. */
 		return;
@@ -1546,10 +1550,8 @@ tty_colours_bg(struct tty *tty, const struct grid_cell *gc)
 
 	/* Is this a 256-colour colour? */
 	if (gc->flags & GRID_FLAG_BG256) {
-		/* Try as 256 colours or translating to 88. */
+		/* Try as 256 colours. */
 		if (tty_try_256(tty, bg, "48") == 0)
-			goto save_bg;
-		if (tty_try_88(tty, bg, "48") == 0)
 			goto save_bg;
 		/* Else already handled by tty_check_bg. */
 		return;
@@ -1582,28 +1584,29 @@ tty_try_256(struct tty *tty, u_char colour, const char *type)
 {
 	char	s[32];
 
-	if (!(tty->term->flags & TERM_256COLOURS) &&
-	    !(tty->term_flags & TERM_256COLOURS))
-		return (-1);
+	/*
+	 * If the terminfo entry has 256 colours, assume that setaf and setab
+	 * work correctly.
+	 */
+	if (tty->term->flags & TERM_256COLOURS) {
+		if (*type == '3')
+			tty_putcode1(tty, TTYC_SETAF, colour);
+		else
+			tty_putcode1(tty, TTYC_SETAB, colour);
+		return (0);
+	}
 
-	xsnprintf(s, sizeof s, "\033[%s;5;%hhum", type, colour);
-	tty_puts(tty, s);
-	return (0);
-}
+	/*
+	 * If the user has specified -2 to the client, setaf and setab may not
+	 * work, so send the usual sequence.
+	 */
+	if (tty->term_flags & TERM_256COLOURS) {
+		xsnprintf(s, sizeof s, "\033[%s;5;%hhum", type, colour);
+		tty_puts(tty, s);
+		return (0);
+	}
 
-int
-tty_try_88(struct tty *tty, u_char colour, const char *type)
-{
-	char	s[32];
-
-	if (!(tty->term->flags & TERM_88COLOURS) &&
-	    !(tty->term_flags & TERM_88COLOURS))
-		return (-1);
-	colour = colour_256to88(colour);
-
-	xsnprintf(s, sizeof s, "\033[%s;5;%hhum", type, colour);
-	tty_puts(tty, s);
-	return (0);
+	return (-1);
 }
 
 void

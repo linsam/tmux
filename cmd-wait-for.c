@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2013 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -33,10 +33,8 @@ enum cmd_retval cmd_wait_for_exec(struct cmd *, struct cmd_q *);
 const struct cmd_entry cmd_wait_for_entry = {
 	"wait-for", "wait",
 	"LSU", 1, 1,
-	"[-LSU] channel",
+	"[-L|-S|-U] channel",
 	0,
-	NULL,
-	NULL,
 	cmd_wait_for_exec
 };
 
@@ -109,7 +107,7 @@ cmd_wait_for_signal(struct cmd_q *cmdq, const char *name,
 
 	if (!wc->locked) {
 		RB_REMOVE(wait_channels, &wait_channels, wc);
-		free((void*) wc->name);
+		free((void *)wc->name);
 		free(wc);
 	}
 
@@ -187,7 +185,7 @@ cmd_wait_for_unlock(struct cmd_q *cmdq, const char *name,
 		wc->locked = 0;
 		if (TAILQ_EMPTY(&wc->waiters)) {
 			RB_REMOVE(wait_channels, &wait_channels, wc);
-			free((void*) wc->name);
+			free((void *)wc->name);
 			free(wc);
 		}
 	}
@@ -195,3 +193,25 @@ cmd_wait_for_unlock(struct cmd_q *cmdq, const char *name,
 	return (CMD_RETURN_NORMAL);
 }
 
+void
+cmd_wait_for_flush(void)
+{
+	struct wait_channel	*wc, *wc1;
+	struct cmd_q		*wq, *wq1;
+
+	RB_FOREACH_SAFE(wc, wait_channels, &wait_channels, wc1) {
+		TAILQ_FOREACH_SAFE(wq, &wc->waiters, waitentry, wq1) {
+			TAILQ_REMOVE(&wc->waiters, wq, waitentry);
+			if (!cmdq_free(wq))
+				cmdq_continue(wq);
+		}
+		while ((wq = TAILQ_FIRST(&wc->lockers)) != NULL) {
+			TAILQ_REMOVE(&wc->lockers, wq, waitentry);
+			if (!cmdq_free(wq))
+				cmdq_continue(wq);
+		}
+		RB_REMOVE(wait_channels, &wait_channels, wc);
+		free((void *)wc->name);
+		free(wc);
+	}
+}

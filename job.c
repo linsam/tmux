@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "tmux.h"
 
@@ -59,6 +60,8 @@ job_run(const char *cmd, struct session *s,
 	switch (pid = fork()) {
 	case -1:
 		environ_free(&env);
+		close(out[0]);
+		close(out[1]);
 		return (NULL);
 	case 0:		/* child */
 		clear_signals(1);
@@ -108,7 +111,7 @@ job_run(const char *cmd, struct session *s,
 
 	job->event = bufferevent_new(job->fd, NULL, job_write_callback,
 	    job_callback, job);
-	bufferevent_enable(job->event, EV_READ);
+	bufferevent_enable(job->event, EV_READ|EV_WRITE);
 
 	log_debug("run job %p: %s, pid %ld", job, job->cmd, (long) job->pid);
 	return (job);
@@ -143,8 +146,8 @@ job_write_callback(unused struct bufferevent *bufev, void *data)
 	struct job	*job = data;
 	size_t		 len = EVBUFFER_LENGTH(EVBUFFER_OUTPUT(job->event));
 
-	log_debug("job write %p: %s, pid %ld, output left %lu", job, job->cmd,
-		    (long) job->pid, (unsigned long) len);
+	log_debug("job write %p: %s, pid %ld, output left %zu", job, job->cmd,
+	    (long) job->pid, len);
 
 	if (len == 0) {
 		shutdown(job->fd, SHUT_WR);

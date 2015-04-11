@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicm@users.sourceforge.net>
@@ -34,8 +34,6 @@ const struct cmd_entry cmd_send_keys_entry = {
 	"lRt:", 0, -1,
 	"[-lR] " CMD_TARGET_PANE_USAGE " key ...",
 	0,
-	NULL,
-	NULL,
 	cmd_send_keys_exec
 };
 
@@ -44,8 +42,6 @@ const struct cmd_entry cmd_send_prefix_entry = {
 	"2t:", 0, 0,
 	"[-2] " CMD_TARGET_PANE_USAGE,
 	0,
-	NULL,
-	NULL,
 	cmd_send_keys_exec
 };
 
@@ -56,7 +52,7 @@ cmd_send_keys_exec(struct cmd *self, struct cmd_q *cmdq)
 	struct window_pane	*wp;
 	struct session		*s;
 	struct input_ctx	*ictx;
-	const char		*str;
+	const u_char		*str;
 	int			 i, key;
 
 	if (cmd_find_pane(cmdq, args_get(args, 't'), &s, &wp) == NULL)

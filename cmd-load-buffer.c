@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $OpenBSD$ */
 
 /*
  * Copyright (c) 2009 Tiago Cunha <me@tiagocunha.org>
@@ -19,6 +19,7 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,8 +39,6 @@ const struct cmd_entry cmd_load_buffer_entry = {
 	"b:", 1, 1,
 	CMD_BUFFER_USAGE " path",
 	0,
-	NULL,
-	NULL,
 	cmd_load_buffer_exec
 };
 
@@ -50,30 +49,19 @@ cmd_load_buffer_exec(struct cmd *self, struct cmd_q *cmdq)
 	struct client	*c = cmdq->client;
 	struct session  *s;
 	FILE		*f;
-	const char	*path, *newpath, *wd;
+	const char	*path, *bufname;
 	char		*pdata, *new_pdata, *cause;
 	size_t		 psize;
-	u_int		 limit;
-	int		 ch, error, buffer, *buffer_ptr;
+	int		 ch, error, cwd, fd;
 
-	if (!args_has(args, 'b'))
-		buffer = -1;
-	else {
-		buffer = args_strtonum(args, 'b', 0, INT_MAX, &cause);
-		if (cause != NULL) {
-			cmdq_error(cmdq, "buffer %s", cause);
-			free(cause);
-			return (CMD_RETURN_ERROR);
-		}
-	}
+	bufname = NULL;
+	if (args_has(args, 'b'))
+		bufname = args_get(args, 'b');
 
 	path = args->argv[0];
 	if (strcmp(path, "-") == 0) {
-		buffer_ptr = xmalloc(sizeof *buffer_ptr);
-		*buffer_ptr = buffer;
-
-		error = server_set_stdin_callback (c, cmd_load_buffer_callback,
-		    buffer_ptr, &cause);
+		error = server_set_stdin_callback(c, cmd_load_buffer_callback,
+		    (void *)bufname, &cause);
 		if (error != 0) {
 			cmdq_error(cmdq, "%s: %s", path, cause);
 			free(cause);
@@ -82,20 +70,17 @@ cmd_load_buffer_exec(struct cmd *self, struct cmd_q *cmdq)
 		return (CMD_RETURN_WAIT);
 	}
 
-	if (c != NULL)
-		wd = c->cwd;
-	else if ((s = cmd_current_session(cmdq, 0)) != NULL) {
-		wd = options_get_string(&s->options, "default-path");
-		if (*wd == '\0')
-			wd = s->cwd;
-	} else
-		wd = NULL;
-	if (wd != NULL && *wd != '\0') {
-		newpath = get_full_path(wd, path);
-		if (newpath != NULL)
-			path = newpath;
-	}
-	if ((f = fopen(path, "rb")) == NULL) {
+	if (c != NULL && c->session == NULL)
+		cwd = c->cwd;
+	else if ((s = cmd_current_session(cmdq, 0)) != NULL)
+		cwd = s->cwd;
+	else
+		cwd = AT_FDCWD;
+
+	if ((fd = openat(cwd, path, O_RDONLY)) == -1 ||
+	    (f = fdopen(fd, "rb")) == NULL) {
+		if (fd != -1)
+			close(fd);
 		cmdq_error(cmdq, "%s: %s", path, strerror(errno));
 		return (CMD_RETURN_ERROR);
 	}
@@ -120,14 +105,10 @@ cmd_load_buffer_exec(struct cmd *self, struct cmd_q *cmdq)
 
 	fclose(f);
 
-	limit = options_get_number(&global_options, "buffer-limit");
-	if (buffer == -1) {
-		paste_add(&global_buffers, pdata, psize, limit);
-		return (CMD_RETURN_NORMAL);
-	}
-	if (paste_replace(&global_buffers, buffer, pdata, psize) != 0) {
-		cmdq_error(cmdq, "no buffer %d", buffer);
+	if (paste_set(pdata, psize, bufname, &cause) != 0) {
+		cmdq_error(cmdq, "%s", cause);
 		free(pdata);
+		free(cause);
 		return (CMD_RETURN_ERROR);
 	}
 
@@ -143,10 +124,9 @@ error:
 void
 cmd_load_buffer_callback(struct client *c, int closed, void *data)
 {
-	int	*buffer = data;
-	char	*pdata;
-	size_t	 psize;
-	u_int	 limit;
+	const char	*bufname = data;
+	char		*pdata, *cause;
+	size_t		 psize;
 
 	if (!closed)
 		return;
@@ -157,24 +137,20 @@ cmd_load_buffer_callback(struct client *c, int closed, void *data)
 		return;
 
 	psize = EVBUFFER_LENGTH(c->stdin_data);
-	if (psize == 0 || (pdata = malloc(psize + 1)) == NULL) {
-		free(data);
+	if (psize == 0 || (pdata = malloc(psize + 1)) == NULL)
 		goto out;
-	}
+
 	memcpy(pdata, EVBUFFER_DATA(c->stdin_data), psize);
 	pdata[psize] = '\0';
 	evbuffer_drain(c->stdin_data, psize);
 
-	limit = options_get_number(&global_options, "buffer-limit");
-	if (*buffer == -1)
-		paste_add(&global_buffers, pdata, psize, limit);
-	else if (paste_replace(&global_buffers, *buffer, pdata, psize) != 0) {
+	if (paste_set(pdata, psize, bufname, &cause) != 0) {
 		/* No context so can't use server_client_msg_error. */
-		evbuffer_add_printf(c->stderr_data, "no buffer %d\n", *buffer);
+		evbuffer_add_printf(c->stderr_data, "%s", cause);
 		server_push_stderr(c);
+		free(pdata);
+		free(cause);
 	}
-
-	free(data);
 
 out:
 	cmdq_continue(c->cmdq);

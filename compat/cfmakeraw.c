@@ -1,7 +1,6 @@
-/* $Id$ */
-
 /*
- * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2013 Dagobert Michelsen
+ * Copyright (c) 2013 Nicholas Marriott <nicm@users.sourceforge.net>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,41 +15,16 @@
  * OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/types.h>
-
-#include <stdlib.h>
 #include <string.h>
 
 #include "tmux.h"
 
-/*
- * Suspend client with SIGTSTP.
- */
-
-enum cmd_retval	 cmd_suspend_client_exec(struct cmd *, struct cmd_q *);
-
-const struct cmd_entry cmd_suspend_client_entry = {
-	"suspend-client", "suspendc",
-	"t:", 0, 0,
-	CMD_TARGET_CLIENT_USAGE,
-	0,
-	NULL,
-	NULL,
-	cmd_suspend_client_exec
-};
-
-enum cmd_retval
-cmd_suspend_client_exec(struct cmd *self, struct cmd_q *cmdq)
+void
+cfmakeraw(struct termios *tio)
 {
-	struct args	*args = self->args;
-	struct client	*c;
-
-	if ((c = cmd_find_client(cmdq, args_get(args, 't'), 0)) == NULL)
-		return (CMD_RETURN_ERROR);
-
-	tty_stop_tty(&c->tty);
-	c->flags |= CLIENT_SUSPENDED;
-	server_write_client(c, MSG_SUSPEND, NULL, 0);
-
-	return (CMD_RETURN_NORMAL);
+	tio->c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL|IXON);
+	tio->c_oflag &= ~OPOST;
+	tio->c_lflag &= ~(ECHO|ECHONL|ICANON|ISIG|IEXTEN);
+	tio->c_cflag &= ~(CSIZE|PARENB);
+	tio->c_cflag |= CS8;
 }

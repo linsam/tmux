@@ -264,11 +264,6 @@ update_pane_status(struct client *c, struct options *oo, struct window_pane *wp,
 			screen_write_cursormove(&ctx, 0, 0);
 			screen_write_cnputs(&ctx, len, &stdgc, utf8flag, "%s", msg);
 			screen_write_stop(&ctx);
-		FILE *out = fopen("/tmp/tmux.out","a");
-		fprintf(out, " update %x at %u,%u  (%u + %u + %u)\n", wp, wp->xoff, top+wp->yoff+wp->sy, wp->sy, top, wp->yoff, wp->sy);
-		fprintf(out, " msg: '%s'\n", msg);
-		fprintf(out, " ststr: '%s'\n", options_get_string(&wp->window->options, "pane-status-format"));
-		fclose(out);
 			free(msg);
 			tty_draw_line(tty, &mys, 0, wp->xoff, top + wp->yoff + wp->sy);
 		}

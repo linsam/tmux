@@ -923,6 +923,12 @@ TAILQ_HEAD(window_panes, window_pane);
 RB_HEAD(window_pane_tree, window_pane);
 ARRAY_DECL(window_pane_list, struct window_pane *);
 
+struct pane_status {
+	struct screen status;
+	TAILQ_ENTRY(pane_status) entry;
+};
+TAILQ_HEAD(pane_statuses, pane_status);
+
 /* Window structure. */
 struct window {
 	u_int		 id;
@@ -1283,6 +1289,7 @@ struct client {
 	struct status_out_tree status_new;
 	struct timeval	 status_timer;
 	struct screen	 status;
+	struct pane_statuses pane_statuses;
 
 #define CLIENT_TERMINAL 0x1
 #define CLIENT_PREFIX 0x2
@@ -1923,6 +1930,7 @@ void	 status_free_jobs(struct status_out_tree *);
 void	 status_update_jobs(struct client *);
 void	 status_set_window_at(struct client *, u_int);
 int	 status_redraw(struct client *);
+int	 pane_status_redraw(struct client *c);
 void printflike(2, 3) status_message_set(struct client *, const char *, ...);
 void	 status_message_clear(struct client *);
 int	 status_message_redraw(struct client *);
@@ -2058,6 +2066,7 @@ void	 screen_write_setselection(struct screen_write_ctx *, u_char *, u_int);
 void	 screen_write_rawstring(struct screen_write_ctx *, u_char *, u_int);
 
 /* screen-redraw.c */
+void	 screen_redraw_draw_pane_status(struct client *c, u_int top);
 void	 screen_redraw_screen(struct client *, int, int, int);
 void	 screen_redraw_pane(struct client *, struct window_pane *);
 

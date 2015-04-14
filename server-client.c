@@ -749,6 +749,7 @@ server_client_check_redraw(struct client *c)
 			redraw = status_prompt_redraw(c);
 		else
 			redraw = status_redraw(c);
+		redraw |= pane_status_redraw(c);
 		if (!redraw)
 			c->flags &= ~CLIENT_STATUS;
 	}

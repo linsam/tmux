@@ -20,10 +20,6 @@
 
 #include <string.h>
 
-#include <stdlib.h>
-
-#include <time.h>
-
 #include "tmux.h"
 
 int	screen_redraw_cell_border1(struct window_pane *, u_int, u_int);
@@ -233,54 +229,20 @@ screen_redraw_check_active(u_int px, u_int py, int type, struct window *w,
 }
 
 void
-update_pane_status(struct client *c, struct options *oo, struct window_pane *wp, int top)
-{
-	if (options_get_number(&wp->window->options, "pane-status") == 1) {
-		struct tty		*tty = &c->tty;
-		struct screen		 mys;
-		struct screen_write_ctx	 ctx;
-		int			 utf8flag;
-		struct grid_cell	 stdgc;
-		int			 spos = 1;
-		char			*msg;
-
-		utf8flag = options_get_number(oo, "status-utf8");
-		memcpy(&stdgc, &grid_default_cell, sizeof stdgc);
-		colour_set_fg(&stdgc, options_get_number(&wp->window->options, "pane-status-fg"));
-		colour_set_bg(&stdgc, options_get_number(&wp->window->options, "pane-status-bg"));
-		stdgc.attr |= options_get_number(&wp->window->options, "pane-status-attr");
-		screen_init(&mys, wp->sx, 1, 0);
-		/* ISSUE IS HERE: get_string is correct, but status_replace
-		 * is returning an empty line. */
-		//msg = status_replace(c, NULL, NULL, wp, options_get_string(&wp->window->options, "pane-status-format"), time(NULL), 1);
-		msg = status_replace(c, NULL, wp, options_get_string(&wp->window->options, "pane-status-format"), time(NULL));
-		if (msg) {
-			int len;
-			len = screen_write_strlen(utf8flag, "%s", msg);
-			if (len > wp->sx) {
-				len = wp->sx;
-			}
-			screen_write_start(&ctx, NULL, &mys);
-			screen_write_cursormove(&ctx, 0, 0);
-			screen_write_cnputs(&ctx, len, &stdgc, utf8flag, "%s", msg);
-			screen_write_stop(&ctx);
-			free(msg);
-			tty_draw_line(tty, &mys, 0, wp->xoff, top + wp->yoff + wp->sy);
-		}
-		screen_free(&mys);
-	}
-}
-
-void
-screen_redraw_draw_pane_status(struct client *c, struct options *oo, u_int top)
+screen_redraw_draw_pane_status(struct client *c, u_int top)
 {
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
+	struct pane_status	*ps = TAILQ_FIRST(&c->pane_statuses);
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;
-		update_pane_status(c, oo, wp, top);
+		if (!ps) {
+			fatalx("pane status not found");
+		}
+		tty_draw_line(&c->tty, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
+		ps = TAILQ_NEXT(ps, entry);
 	}
 }
 
@@ -293,6 +255,7 @@ screen_redraw_screen(struct client *c, int draw_panes, int draw_status,
 	struct tty	*tty = &c->tty;
 	u_int		 top;
 	int	 	 status, spos;
+	int		 draw_pane_status;
 
 	/* Suspended clients should not be updated. */
 	if (c->flags & CLIENT_SUSPENDED)
@@ -305,6 +268,10 @@ screen_redraw_screen(struct client *c, int draw_panes, int draw_status,
 	else
 		status = options_get_number(oo, "status");
 	top = 0;
+	if (draw_status && options_get_number(&c->session->curw->window->options, "pane-status"))
+		draw_pane_status = 1;
+	else
+		draw_pane_status = 0;
 	if (status && spos == 0)
 		top = 1;
 	if (!status)
@@ -316,8 +283,8 @@ screen_redraw_screen(struct client *c, int draw_panes, int draw_status,
 		screen_redraw_draw_panes(c, top);
 	if (draw_status)
 		screen_redraw_draw_status(c, top);
-	if (draw_panes || draw_borders || draw_status){
-		screen_redraw_draw_pane_status(c, oo, top);
+	if (draw_pane_status){
+		screen_redraw_draw_pane_status(c, top);
 	}
 	tty_reset(tty);
 }

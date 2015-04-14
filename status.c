@@ -362,6 +362,86 @@ out:
 	return (1);
 }
 
+/* Draw status for panes */
+int
+pane_status_redraw(struct client *c)
+{
+	struct screen_write_ctx	 ctx;
+	int			 utf8flag;
+	struct grid_cell	 stdgc;
+	char			*msg;
+	struct window		*w = c->session->curw->window;
+	struct window_pane	*wp;
+	struct pane_statuses	 old_pane_statuses;
+	struct pane_status	*pane_status;
+	struct pane_status	*t;
+	int			 diff = 0;
+	unsigned int		 len;
+
+	if (options_get_number(&w->options, "pane-status") == 0) {
+		return 0;
+	}
+
+	memcpy(&old_pane_statuses, &c->pane_statuses, sizeof old_pane_statuses);
+	TAILQ_INIT(&c->pane_statuses);
+
+	utf8flag = options_get_number(&c->session->options, "status-utf8");
+
+	/* Create set of statuses for each pane */
+	TAILQ_FOREACH(wp, &w->panes, entry) {
+		if (!window_pane_visible(wp))
+			continue;
+		pane_status = malloc(sizeof *pane_status);
+		if (!pane_status) {
+			continue;
+		}
+		memcpy(&stdgc, &grid_default_cell, sizeof stdgc);
+		colour_set_fg(&stdgc, options_get_number(&wp->window->options, "pane-status-fg"));
+		colour_set_bg(&stdgc, options_get_number(&wp->window->options, "pane-status-bg"));
+		stdgc.attr |= options_get_number(&wp->window->options, "pane-status-attr");
+		screen_init(&pane_status->status, wp->sx, 1, 0);
+		msg = status_replace(c, NULL, wp, options_get_string(&wp->window->options, "pane-status-format"), time(NULL));
+		len = screen_write_strlen(utf8flag, "%s", msg);
+		if (len > wp->sx) {
+			len = wp->sx;
+		}
+		screen_write_start(&ctx, NULL, &pane_status->status);
+		screen_write_cursormove(&ctx, 0, 0);
+		screen_write_cnputs(&ctx, len, &stdgc, utf8flag, "%s", msg);
+		screen_write_stop(&ctx);
+		free(msg);
+		TAILQ_INSERT_TAIL(&c->pane_statuses, pane_status, entry);
+	}
+
+	/* Check if any of the status lines have changed, or if the number
+	 * of status lines have changed. */
+	{
+		struct pane_status *old;
+		struct pane_status *new;
+		old = TAILQ_FIRST(&old_pane_statuses);
+		new = TAILQ_FIRST(&c->pane_statuses);
+		while (old != TAILQ_END(&old_pane_statuses) && new != TAILQ_END(&c->pane_statuses)) {
+			if (grid_compare(old->status.grid, new->status.grid) != 0) {
+				//screen_free(&old_status);
+				diff = 1;
+			}
+			//screen_free(&old_status);
+			old = TAILQ_NEXT(old, entry);
+			new = TAILQ_NEXT(new, entry);
+		}
+		if (old != TAILQ_END(&old_pane_statuses) || new != TAILQ_END(&c->pane_statuses)) {
+			diff = 1;
+		}
+	}
+	/* discard old */
+	TAILQ_FOREACH_SAFE(pane_status, &old_pane_statuses, entry, t) {
+		screen_free(&pane_status->status);
+		free(pane_status);
+	}
+	return diff;
+}
+
+
 /* Replace a single special sequence (prefixed by #). */
 void
 status_replace1(struct client *c, char **iptr, char **optr, char *out,

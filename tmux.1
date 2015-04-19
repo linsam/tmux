@@ -2605,7 +2605,7 @@ Set the position of the status line.
 Display
 .Ar string
 to the right of the status bar.
-By default, the current window title in double quotes, the date and the time
+By default, the date and the time
 are shown.
 As with
 .Ic status-left ,
@@ -2905,6 +2905,42 @@ see the
 .Ic message-command-style
 option.
 Attributes are ignored.
+.Pp
+.It Xo Ic pane-status
+.Op Ic on | off
+.Xc
+Show or hide a status line at the bottom of each pane.
+.Pp
+.It Ic pane-status-attr Ar attr
+Attributes.
+.Ar
+TODO Replace with attributes
+.Pp
+.It Ic pane-status-bg Ar color
+Color.
+.Ar TODO
+Replace with style
+.Pp
+.It Ic
+.Pp
+.It Ic pane-status-fg Ar color
+Color.
+.Ar TODO
+Replace with style
+.Pp
+.It Ic pane-status-format Ar string
+Display
+.Ar string
+in the status bar of each pane in the window.
+By default, the pane title is shown in brackets.
+As with
+.Ic status-left ,
+.Ar string
+will be passed to
+.Xr strftime 3 ,
+character pairs are replaced, and UTF-8 is dependent on the
+.Ic status-utf8
+option.
 .Pp
 .It Xo Ic remain-on-exit
 .Op Ic on | off

@@ -659,22 +659,30 @@ const struct options_table_entry window_options_table[] = {
 
 	{ .name = "pane-status-attr",
 	  .type = OPTIONS_TABLE_ATTRIBUTES,
-	  .default_num = 0
+	  .default_num = 0,
+	  .style = "pane-status-style"
 	},
 
 	{ .name = "pane-status-bg",
 	  .type = OPTIONS_TABLE_COLOUR,
-	  .default_num = 2
+	  .default_num = 2,
+	  .style = "pane-status-style"
 	},
 
 	{ .name = "pane-status-fg",
 	  .type = OPTIONS_TABLE_COLOUR,
-	  .default_num = 0
+	  .default_num = 0,
+	  .style = "pane-status-style"
 	},
 
 	{ .name = "pane-status-format",
 	  .type = OPTIONS_TABLE_STRING,
 	  .default_str = "[#T]"
+	},
+
+	{ .name = "pane-status-style",
+	  .type = OPTIONS_TABLE_STYLE,
+	  .default_str = "default"
 	},
 
 	{ .name = "remain-on-exit",

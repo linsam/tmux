@@ -2911,23 +2911,6 @@ Attributes are ignored.
 .Xc
 Show or hide a status line at the bottom of each pane.
 .Pp
-.It Ic pane-status-attr Ar attr
-Attributes.
-.Ar
-TODO Replace with attributes
-.Pp
-.It Ic pane-status-bg Ar color
-Color.
-.Ar TODO
-Replace with style
-.Pp
-.It Ic
-.Pp
-.It Ic pane-status-fg Ar color
-Color.
-.Ar TODO
-Replace with style
-.Pp
 .It Ic pane-status-format Ar string
 Display
 .Ar string
@@ -2941,6 +2924,14 @@ will be passed to
 character pairs are replaced, and UTF-8 is dependent on the
 .Ic status-utf8
 option.
+.Pp
+.It Ic pane-status-style Ar style
+Set the pane status line style.
+For how to specify
+.Ar style ,
+see the
+.Ic message-command-style
+opption.
 .Pp
 .It Xo Ic remain-on-exit
 .Op Ic on | off

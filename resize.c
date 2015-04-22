@@ -128,16 +128,8 @@ recalculate_sizes(void)
 			forced |= WINDOW_FORCEHEIGHT;
 		}
 
-#if 0 /* This optimization to not resize panes if the window size doesn't
-	 change fails to handle the case where pane sizes may have changed
-	 due to options like 'pane-status' changing. Unfortunately, we
-	 can't at this point know if this function was called because of an
-	 option change, let alone specific option changes. For now, we'll
-	 just skip the optimization and take the computational hit rather
-	 than have a stale display. */
 		if (w->sx == ssx && w->sy == ssy)
 			continue;
-#endif
 		log_debug("window size %u,%u (was %u,%u)", ssx, ssy, w->sx,
 		    w->sy);
 

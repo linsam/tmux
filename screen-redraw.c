@@ -241,7 +241,7 @@ screen_redraw_draw_pane_status(struct client *c, u_int top)
 		if (!ps) {
 			fatalx("pane status not found");
 		}
-		tty_draw_line(&c->tty, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
+		tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
 		ps = TAILQ_NEXT(ps, entry);
 	}
 }
@@ -303,7 +303,7 @@ screen_redraw_pane(struct client *c, struct window_pane *wp)
 		yoff++;
 
 	for (i = 0; i < wp->sy; i++)
-		tty_draw_line(&c->tty, wp->screen, i, wp->xoff, yoff);
+		tty_draw_pane(&c->tty, wp, i, wp->xoff, yoff);
 	tty_reset(&c->tty);
 }
 
@@ -360,9 +360,9 @@ screen_redraw_draw_borders(struct client *c, int status, u_int top)
 			    small && i > msgx && j == msgy)
 				continue;
 			if (screen_redraw_check_active(i, j, type, w, wp))
-				tty_attributes(tty, &active_gc);
+				tty_attributes(tty, &active_gc, NULL);
 			else
-				tty_attributes(tty, &other_gc);
+				tty_attributes(tty, &other_gc, NULL);
 			tty_cursor(tty, i, top + j);
 			tty_putc(tty, CELL_BORDERS[type]);
 		}
@@ -370,7 +370,7 @@ screen_redraw_draw_borders(struct client *c, int status, u_int top)
 
 	if (small) {
 		memcpy(&msg_gc, &grid_default_cell, sizeof msg_gc);
-		tty_attributes(tty, &msg_gc);
+		tty_attributes(tty, &msg_gc, NULL);
 		tty_cursor(tty, msgx, msgy);
 		tty_puts(tty, msg);
 	}
@@ -383,15 +383,13 @@ screen_redraw_draw_panes(struct client *c, u_int top)
 	struct window		*w = c->session->curw->window;
 	struct tty		*tty = &c->tty;
 	struct window_pane	*wp;
-	struct screen		*s;
 	u_int		 	 i;
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;
-		s = wp->screen;
 		for (i = 0; i < wp->sy; i++)
-			tty_draw_line(tty, s, i, wp->xoff, top + wp->yoff);
+			tty_draw_pane(tty, wp, i, wp->xoff, top + wp->yoff);
 		if (c->flags & CLIENT_IDENTIFY)
 			screen_redraw_draw_number(c, wp);
 	}
@@ -404,9 +402,9 @@ screen_redraw_draw_status(struct client *c, u_int top)
 	struct tty	*tty = &c->tty;
 
 	if (top)
-		tty_draw_line(tty, &c->status, 0, 0, 0);
+		tty_draw_line(tty, NULL, &c->status, 0, 0, 0);
 	else
-		tty_draw_line(tty, &c->status, 0, 0, tty->sy - 1);
+		tty_draw_line(tty, NULL, &c->status, 0, 0, tty->sy - 1);
 }
 
 /* Draw number on a pane. */
@@ -448,7 +446,7 @@ screen_redraw_draw_number(struct client *c, struct window_pane *wp)
 		colour_set_bg(&gc, active_colour);
 	else
 		colour_set_bg(&gc, colour);
-	tty_attributes(tty, &gc);
+	tty_attributes(tty, &gc, wp);
 	for (ptr = buf; *ptr != '\0'; ptr++) {
 		if (*ptr < '0' || *ptr > '9')
 			continue;
@@ -475,7 +473,7 @@ draw_text:
 		colour_set_fg(&gc, active_colour);
 	else
 		colour_set_fg(&gc, colour);
-	tty_attributes(tty, &gc);
+	tty_attributes(tty, &gc, wp);
 	tty_puts(tty, buf);
 
 	tty_cursor(tty, 0, 0);

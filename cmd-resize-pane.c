@@ -130,8 +130,13 @@ cmd_resize_pane_mouse_update(struct client *c, struct mouse_event *m)
 	int			 found;
 	u_int			 y, ly;
 	int 			 has_pane_status;
+	int 			 pane_status_pos;
+	int			 yshift;
 
 	has_pane_status = options_get_number(&c->session->curw->window->options, "pane-status");
+	pane_status_pos = options_get_number(&c->session->curw->window->options, "pane-status-position");
+
+	yshift = (has_pane_status && pane_status_pos == 0);
 
 	wl = cmd_mouse_window(m, NULL);
 	if (wl == NULL) {
@@ -156,11 +161,11 @@ cmd_resize_pane_mouse_update(struct client *c, struct mouse_event *m)
 			continue;
 
 		if (wp->xoff + wp->sx == m->lx &&
-		    wp->yoff <= 1 + ly && wp->yoff + wp->sy + has_pane_status >= ly) {
+		    wp->yoff - yshift <= 1 + ly && wp->yoff - yshift + wp->sy + has_pane_status >= ly) {
 			layout_resize_pane(wp, LAYOUT_LEFTRIGHT, m->x - m->lx);
 			found = 1;
 		}
-		if (wp->yoff + wp->sy + has_pane_status == ly &&
+		if (wp->yoff - yshift + wp->sy + has_pane_status == ly &&
 		    wp->xoff <= 1 + m->lx && wp->xoff + wp->sx >= m->lx) {
 			layout_resize_pane(wp, LAYOUT_TOPBOTTOM, y - ly);
 			found = 1;

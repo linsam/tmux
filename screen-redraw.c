@@ -55,16 +55,18 @@ int
 screen_redraw_cell_border1(struct window_pane *wp, u_int px, u_int py)
 {
 	int has_pane_status;
+	int yshift;
 
 	has_pane_status = options_get_number(&wp->window->options, "pane-status");
+	yshift = has_pane_status && options_get_number(&wp->window->options, "pane-status-position") == 0;
 
 	/* Inside pane. */
 	if (px >= wp->xoff && px < wp->xoff + wp->sx &&
-	    py >= wp->yoff && py < wp->yoff + wp->sy + has_pane_status)
+	    py >= wp->yoff - yshift && py < wp->yoff - yshift + wp->sy + has_pane_status)
 		return (0);
 
 	/* Left/right borders. */
-	if ((wp->yoff == 0 || py >= wp->yoff - 1 + has_pane_status) && py <= wp->yoff + wp->sy + has_pane_status) {
+	if ((wp->yoff - yshift == 0 || py >= wp->yoff - yshift - 1 + has_pane_status) && py <= wp->yoff - yshift + wp->sy + has_pane_status) {
 		if (wp->xoff != 0 && px == wp->xoff - 1)
 			return (1);
 		if (px == wp->xoff + wp->sx)
@@ -73,9 +75,9 @@ screen_redraw_cell_border1(struct window_pane *wp, u_int px, u_int py)
 
 	/* Top/bottom borders. */
 	if ((wp->xoff == 0 || px >= wp->xoff - 1) && px <= wp->xoff + wp->sx) {
-		if (wp->yoff != 0 && py == wp->yoff - 1)
+		if (wp->yoff - yshift != 0 && py == wp->yoff - yshift - 1)
 			return (1);
-		if (py == wp->yoff + wp->sy + has_pane_status)
+		if (py == wp->yoff - yshift + wp->sy + has_pane_status)
 			return (1);
 	}
 
@@ -110,9 +112,14 @@ screen_redraw_check_cell(struct client *c, u_int px, u_int py,
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
 	int			 borders;
-	int has_pane_status;
+	int			 has_pane_status;
+	int			 pspos;
+	int			 yoffset;
 
 	has_pane_status = options_get_number(&w->options, "pane-status");
+	pspos = options_get_number(&w->options, "pane-status-position");
+
+	yoffset = (has_pane_status && pspos == 0);
 
 	if (px > w->sx || py > w->sy)
 		return (CELL_OUTSIDE);
@@ -125,8 +132,8 @@ screen_redraw_check_cell(struct client *c, u_int px, u_int py,
 		/* If outside the pane and its border, skip it. */
 		if ((wp->xoff != 0 && px < wp->xoff - 1) ||
 		    px > wp->xoff + wp->sx ||
-		    (wp->yoff != 0 && py < wp->yoff - 1) ||
-		    py > wp->yoff + wp->sy + has_pane_status)
+		    (wp->yoff - yoffset != 0 && py < wp->yoff - 1 - yoffset) ||
+		    py > wp->yoff - yoffset + wp->sy + has_pane_status)
 			continue;
 
 		/* If definitely inside, return so. */
@@ -234,14 +241,20 @@ screen_redraw_draw_pane_status(struct client *c, u_int top)
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
 	struct pane_status	*ps = TAILQ_FIRST(&c->pane_statuses);
+	u_int			 pspos;
 
+	pspos = options_get_number(&w->options, "pane-status-position");
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;
 		if (!ps) {
 			fatalx("pane status not found");
 		}
-		tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
+		if (pspos) {
+			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
+		} else {
+			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff - 1);
+		}
 		ps = TAILQ_NEXT(ps, entry);
 	}
 }
@@ -462,10 +475,10 @@ screen_redraw_draw_number(struct client *c, struct window_pane *wp)
 		px += 6;
 	}
 
-	len = xsnprintf(buf, sizeof buf, "%ux%u", wp->sx, wp->sy);
+	len = xsnprintf(buf, sizeof buf, "%ux%u+%ux%u", wp->xoff, wp->yoff, wp->sx, wp->sy);
 	if (wp->sx < len || wp->sy < 6)
 		return;
-	tty_cursor(tty, xoff + wp->sx - len, yoff);
+	tty_cursor(tty, xoff + wp->sx - len, yoff+1);
 
 draw_text:
 	memcpy(&gc, &grid_default_cell, sizeof gc);

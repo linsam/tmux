@@ -419,13 +419,18 @@ struct window_pane *
 window_get_active_at(struct window *w, u_int x, u_int y)
 {
 	struct window_pane	*wp;
+	int			 has_pane_status;
+	u_int			 yshift;
+
+	has_pane_status = options_get_number(&w->options, "pane-status");
+	yshift = (has_pane_status && options_get_number(&w->options, "pane-status-position") == 0);
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;
 		if (x < wp->xoff || x > wp->xoff + wp->sx)
 			continue;
-		if (y < wp->yoff || y > wp->yoff + wp->sy)
+		if (y < wp->yoff - yshift || y > wp->yoff - yshift + wp->sy)
 			continue;
 		return (wp);
 	}

@@ -661,6 +661,12 @@ const struct options_table_entry window_options_table[] = {
 	  .default_str = "[#T]"
 	},
 
+	{ .name = "pane-status-position",
+	  .type = OPTIONS_TABLE_CHOICE,
+	  .choices = options_table_status_position_list,
+	  .default_num = 1
+	},
+
 	{ .name = "pane-status-style",
 	  .type = OPTIONS_TABLE_STYLE,
 	  .default_str = "default"

@@ -293,6 +293,7 @@ server_client_check_mouse(struct client *c)
 	u_int					 x, y, b;
 	int					 key;
 	int					 has_pane_status;
+	u_int					 yshift;
 
 
 	log_debug("mouse %02x at %u,%u (last %u,%u) (%d)", m->b, m->x, m->y,
@@ -346,12 +347,13 @@ server_client_check_mouse(struct client *c)
 			y = m->statusat - 1;
 
 		has_pane_status = options_get_number(&s->curw->window->options, "pane-status");
+		yshift = (has_pane_status && options_get_number(&s->curw->window->options, "pane-status-position") == 0);
 
 		TAILQ_FOREACH(wp, &s->curw->window->panes, entry) {
 			if ((wp->xoff + wp->sx == x &&
-			    wp->yoff <= 1 + y &&
-			    wp->yoff + wp->sy + has_pane_status >= y) ||
-			    (wp->yoff + wp->sy + has_pane_status == y &&
+			    wp->yoff - yshift <= 1 + y &&
+			    wp->yoff - yshift + wp->sy + has_pane_status >= y) ||
+			    (wp->yoff - yshift + wp->sy + has_pane_status == y &&
 			    wp->xoff <= 1 + x &&
 			    wp->xoff + wp->sx >= x))
 				break;

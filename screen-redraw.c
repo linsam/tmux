@@ -475,10 +475,10 @@ screen_redraw_draw_number(struct client *c, struct window_pane *wp)
 		px += 6;
 	}
 
-	len = xsnprintf(buf, sizeof buf, "%ux%u+%ux%u", wp->xoff, wp->yoff, wp->sx, wp->sy);
+	len = xsnprintf(buf, sizeof buf, "%ux%u", wp->sx, wp->sy);
 	if (wp->sx < len || wp->sy < 6)
 		return;
-	tty_cursor(tty, xoff + wp->sx - len, yoff+1);
+	tty_cursor(tty, xoff + wp->sx - len, yoff);
 
 draw_text:
 	memcpy(&gc, &grid_default_cell, sizeof gc);

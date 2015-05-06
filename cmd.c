@@ -510,12 +510,6 @@ cmd_mouse_at(struct window_pane *wp, struct mouse_event *m, u_int *xp,
     u_int *yp, int last)
 {
 	u_int	x, y;
-	u_int   has_pane_status;
-	u_int   yshift;
-
-	has_pane_status = options_get_number(&wp->window->options, "pane-status");
-	yshift = (has_pane_status && options_get_number(&wp->window->options, "pane-status-position") == 0);
-	// yshift=0; // doesn't seem to matter?
 
 	if (last) {
 		x = m->lx;
@@ -532,11 +526,11 @@ cmd_mouse_at(struct window_pane *wp, struct mouse_event *m, u_int *xp,
 
 	if (x < wp->xoff || x >= wp->xoff + wp->sx)
 		return (-1);
-	if (y < wp->yoff - yshift || y >= wp->yoff - yshift + wp->sy + has_pane_status)
+	if (y < wp->yoff || y >= wp->yoff + wp->sy)
 		return (-1);
 
 	*xp = x - wp->xoff;
-	*yp = y - wp->yoff - yshift;
+	*yp = y - wp->yoff;
 	return (0);
 }
 

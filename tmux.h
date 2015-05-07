@@ -87,10 +87,9 @@ extern char   **environ;
 #define KEYC_ESCAPE 0x2000
 #define KEYC_CTRL 0x4000
 #define KEYC_SHIFT 0x8000
-#define KEYC_PREFIX 0x10000
 
 /* Mask to obtain key w/o modifiers. */
-#define KEYC_MASK_MOD (KEYC_ESCAPE|KEYC_CTRL|KEYC_SHIFT|KEYC_PREFIX)
+#define KEYC_MASK_MOD (KEYC_ESCAPE|KEYC_CTRL|KEYC_SHIFT)
 #define KEYC_MASK_KEY (~KEYC_MASK_MOD)
 
 /* Is this a mouse key? */
@@ -949,7 +948,6 @@ struct window_pane {
 };
 TAILQ_HEAD(window_panes, window_pane);
 RB_HEAD(window_pane_tree, window_pane);
-ARRAY_DECL(window_pane_list, struct window_pane *);
 
 struct pane_status {
 	struct screen status;
@@ -971,6 +969,7 @@ struct window {
 	int		 lastlayout;
 	struct layout_cell *layout_root;
 	struct layout_cell *saved_layout_root;
+	char		*old_layout;
 
 	u_int		 sx;
 	u_int		 sy;
@@ -988,8 +987,10 @@ struct window {
 	struct options	 options;
 
 	u_int		 references;
+
+	RB_ENTRY(window) entry;
 };
-ARRAY_DECL(windows, struct window *);
+RB_HEAD(windows, window);
 
 /* Entry on local window list. */
 struct winlink {
@@ -1104,7 +1105,6 @@ struct session {
 	RB_ENTRY(session)    entry;
 };
 RB_HEAD(sessions, session);
-ARRAY_DECL(sessionslist, struct session *);
 
 /* TTY information. */
 struct tty_key {
@@ -1258,7 +1258,9 @@ struct tty_ctx {
 /* Saved message entry. */
 struct message_entry {
 	char   *msg;
+	u_int	msg_num;
 	time_t	msg_time;
+	TAILQ_ENTRY(message_entry) entry;
 };
 
 /* Status output data from a job. */
@@ -1306,7 +1308,7 @@ struct client {
 	struct pane_statuses pane_statuses;
 
 #define CLIENT_TERMINAL 0x1
-#define CLIENT_PREFIX 0x2
+/* 0x2 unused */
 #define CLIENT_EXIT 0x4
 #define CLIENT_REDRAW 0x8
 #define CLIENT_STATUS 0x10
@@ -1325,12 +1327,14 @@ struct client {
 #define CLIENT_256COLOURS 0x20000
 #define CLIENT_IDENTIFIED 0x40000
 	int		 flags;
+	struct key_table *keytable;
 
 	struct event	 identify_timer;
 
 	char		*message_string;
 	struct event	 message_timer;
-	ARRAY_DECL(, struct message_entry) message_log;
+	u_int		 message_next;
+	TAILQ_HEAD(, message_entry) message_log;
 
 	char		*prompt_string;
 	char		*prompt_buffer;
@@ -1352,8 +1356,10 @@ struct client {
 
 	struct cmd_q	*cmdq;
 	int		 references;
+
+	TAILQ_ENTRY(client) entry;
 };
-ARRAY_DECL(clients, struct client *);
+TAILQ_HEAD(clients, client);
 
 /* Parsed arguments structures. */
 struct args_entry {
@@ -1445,15 +1451,24 @@ struct cmd_entry {
 	enum cmd_retval	 (*exec)(struct cmd *, struct cmd_q *);
 };
 
-/* Key binding. */
+/* Key binding and key table. */
 struct key_binding {
-	int		 key;
-	struct cmd_list	*cmdlist;
-	int		 can_repeat;
+	int			 key;
+	struct cmd_list		*cmdlist;
+	int			 can_repeat;
 
-	RB_ENTRY(key_binding) entry;
+	RB_ENTRY(key_binding)	 entry;
 };
 RB_HEAD(key_bindings, key_binding);
+struct key_table {
+	const char		 *name;
+	struct key_bindings	 key_bindings;
+
+	u_int			 references;
+
+	RB_ENTRY(key_table)	 entry;
+};
+RB_HEAD(key_tables, key_table);
 
 /*
  * Option table entries. The option table is the user-visible part of the
@@ -1607,7 +1622,7 @@ int	options_table_find(const char *, const struct options_table_entry **,
 
 /* job.c */
 extern struct joblist all_jobs;
-struct job *job_run(const char *, struct session *,
+struct job *job_run(const char *, struct session *, int,
 	    void (*)(struct job *), void (*)(void *), void *);
 void	job_free(struct job *);
 void	job_died(struct job *, int);
@@ -1731,8 +1746,19 @@ size_t		 args_print(struct args *, char *, size_t);
 int		 args_has(struct args *, u_char);
 void		 args_set(struct args *, u_char, const char *);
 const char	*args_get(struct args *, u_char);
-long long	 args_strtonum(
-		    struct args *, u_char, long long, long long, char **);
+long long	 args_strtonum(struct args *, u_char, long long, long long,
+		     char **);
+
+/* cmd-find.c */
+struct session	*cmd_find_current(struct cmd_q *);
+struct session	*cmd_find_session(struct cmd_q *, const char *, int);
+struct winlink	*cmd_find_window(struct cmd_q *, const char *,
+		     struct session **);
+struct winlink	*cmd_find_pane(struct cmd_q *, const char *, struct session **,
+		     struct window_pane **);
+struct client	*cmd_find_client(struct cmd_q *, const char *, int);
+int		 cmd_find_index(struct cmd_q *, const char *,
+		     struct session **);
 
 /* cmd.c */
 int		 cmd_pack_argv(int, char **, char *, size_t);
@@ -1747,19 +1773,7 @@ int		 cmd_mouse_at(struct window_pane *, struct mouse_event *,
 struct winlink	*cmd_mouse_window(struct mouse_event *, struct session **);
 struct window_pane *cmd_mouse_pane(struct mouse_event *, struct session **,
 		     struct winlink **);
-struct session	*cmd_current_session(struct cmd_q *, int);
-struct client	*cmd_current_client(struct cmd_q *);
-struct client	*cmd_find_client(struct cmd_q *, const char *, int);
-struct session	*cmd_find_session(struct cmd_q *, const char *, int);
-struct winlink	*cmd_find_window(struct cmd_q *, const char *,
-		     struct session **);
-int		 cmd_find_index(struct cmd_q *, const char *,
-		     struct session **);
-struct winlink	*cmd_find_pane(struct cmd_q *, const char *, struct session **,
-		     struct window_pane **);
 char		*cmd_template_replace(const char *, const char *, int);
-struct window	*cmd_lookup_windowid(const char *);
-struct window_pane *cmd_lookup_paneid(const char *);
 extern const struct cmd_entry *cmd_table[];
 extern const struct cmd_entry cmd_attach_session_entry;
 extern const struct cmd_entry cmd_bind_key_entry;
@@ -1881,12 +1895,16 @@ void	cmd_wait_for_flush(void);
 int	client_main(int, char **, int);
 
 /* key-bindings.c */
-extern struct key_bindings key_bindings;
-int	 key_bindings_cmp(struct key_binding *, struct key_binding *);
 RB_PROTOTYPE(key_bindings, key_binding, entry, key_bindings_cmp);
-struct key_binding *key_bindings_lookup(int);
-void	 key_bindings_add(int, int, struct cmd_list *);
-void	 key_bindings_remove(int);
+RB_PROTOTYPE(key_tables, key_table, entry, key_table_cmp);
+extern struct key_tables key_tables;
+int	 key_table_cmp(struct key_table *, struct key_table *);
+int	 key_bindings_cmp(struct key_binding *, struct key_binding *);
+struct 	 key_table *key_bindings_get_table(const char *, int);
+void 	 key_bindings_unref_table(struct key_table *);
+void	 key_bindings_add(const char *, int, int, struct cmd_list *);
+void	 key_bindings_remove(const char *, int);
+void	 key_bindings_remove_table(const char *);
 void	 key_bindings_init(void);
 void	 key_bindings_dispatch(struct key_binding *, struct client *,
 	     struct mouse_event *);
@@ -2115,6 +2133,8 @@ void	 screen_reflow(struct screen *, u_int);
 /* window.c */
 extern struct windows windows;
 extern struct window_pane_tree all_window_panes;
+int		 window_cmp(struct window *, struct window *);
+RB_PROTOTYPE(windows, window, entry, window_cmp);
 int		 winlink_cmp(struct winlink *, struct winlink *);
 RB_PROTOTYPE(winlinks, winlink, entry, winlink_cmp);
 int		 window_pane_cmp(struct window_pane *, struct window_pane *);
@@ -2135,7 +2155,7 @@ struct winlink	*winlink_previous_by_number(struct winlink *, struct session *,
 		     int);
 void		 winlink_stack_push(struct winlink_stack *, struct winlink *);
 void		 winlink_stack_remove(struct winlink_stack *, struct winlink *);
-int		 window_index(struct window *, u_int *);
+struct window	*window_find_by_id_str(const char *);
 struct window	*window_find_by_id(u_int);
 struct window	*window_create1(u_int, u_int);
 struct window	*window_create(const char *, int, char **, const char *,
@@ -2161,6 +2181,7 @@ struct window_pane *window_pane_previous_by_number(struct window *,
 int		 window_pane_index(struct window_pane *, u_int *);
 u_int		 window_count_panes(struct window *);
 void		 window_destroy_panes(struct window *);
+struct window_pane *window_pane_find_by_id_str(const char *);
 struct window_pane *window_pane_find_by_id(u_int);
 struct window_pane *window_pane_create(struct window *, u_int, u_int, u_int);
 void		 window_pane_destroy(struct window_pane *);
@@ -2219,7 +2240,7 @@ struct layout_cell *layout_split_pane(
 void		 layout_close_pane(struct window_pane *);
 
 /* layout-custom.c */
-char		*layout_dump(struct window *);
+char		*layout_dump(struct layout_cell *);
 int		 layout_parse(struct window *, const char *);
 
 /* layout-set.c */
@@ -2298,6 +2319,7 @@ int	session_cmp(struct session *, struct session *);
 RB_PROTOTYPE(sessions, session, entry, session_cmp);
 int		 session_alive(struct session *);
 struct session	*session_find(const char *);
+struct session	*session_find_by_id_str(const char *);
 struct session	*session_find_by_id(u_int);
 struct session	*session_create(const char *, int, char **, const char *,
 		     int, struct environ *, struct termios *, int, u_int,
@@ -2312,7 +2334,8 @@ struct winlink	*session_new(struct session *, const char *, int, char **,
 struct winlink	*session_attach(struct session *, struct window *, int,
 		     char **);
 int		 session_detach(struct session *, struct winlink *);
-struct winlink	*session_has(struct session *, struct window *);
+int		 session_has(struct session *, struct window *);
+int		 session_is_linked(struct session *, struct window *);
 int		 session_next(struct session *, int);
 int		 session_previous(struct session *, int);
 int		 session_select(struct session *, int);

@@ -34,6 +34,7 @@
 void	tty_read_callback(struct bufferevent *, void *);
 void	tty_error_callback(struct bufferevent *, short, void *);
 
+void	tty_set_italics(struct tty *);
 int	tty_try_256(struct tty *, u_char, const char *);
 
 void	tty_colours(struct tty *, const struct grid_cell *);
@@ -220,7 +221,7 @@ tty_start_tty(struct tty *tty)
 
 	tty_putcode(tty, TTYC_CNORM);
 	if (tty_term_has(tty->term, TTYC_KMOUS))
-		tty_puts(tty, "\033[?1000l\033[?1006l\033[?1005l");
+		tty_puts(tty, "\033[?1000l\033[?1002l\033[?1006l\033[?1005l");
 
 	if (tty_term_has(tty->term, TTYC_XT)) {
 		if (options_get_number(&global_options, "focus-events")) {
@@ -294,7 +295,7 @@ tty_stop_tty(struct tty *tty)
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CNORM));
 	if (tty_term_has(tty->term, TTYC_KMOUS))
-		tty_raw(tty, "\033[?1000l\033[?1006l\033[?1005l");
+		tty_raw(tty, "\033[?1000l\033[?1002l\033[?1006l\033[?1005l");
 
 	if (tty_term_has(tty->term, TTYC_XT)) {
 		if (tty->flags & TTY_FOCUS) {
@@ -457,6 +458,21 @@ tty_putn(struct tty *tty, const void *buf, size_t len, u_int width)
 }
 
 void
+tty_set_italics(struct tty *tty)
+{
+	const char	*s;
+
+	if (tty_term_has(tty->term, TTYC_SITM)) {
+		s = options_get_string(&global_options, "default-terminal");
+		if (strcmp(s, "screen") != 0 && strncmp(s, "screen-", 7) != 0) {
+			tty_putcode(tty, TTYC_SITM);
+			return;
+		}
+	}
+	tty_putcode(tty, TTYC_SMSO);
+}
+
+void
 tty_set_title(struct tty *tty, const char *title)
 {
 	if (!tty_term_has(tty->term, TTYC_TSL) ||
@@ -484,7 +500,7 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 {
 	int	changed;
 
-	if (strcmp(s->ccolour, tty->ccolour))
+	if (s != NULL && strcmp(s->ccolour, tty->ccolour))
 		tty_force_cursor_colour(tty, s->ccolour);
 
 	if (tty->flags & TTY_NOCURSOR)
@@ -501,7 +517,7 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 		} else
 			tty_putcode(tty, TTYC_CIVIS);
 	}
-	if (tty->cstyle != s->cstyle) {
+	if (s != NULL && tty->cstyle != s->cstyle) {
 		if (tty_term_has(tty->term, TTYC_SS)) {
 			if (s->cstyle == 0 &&
 			    tty_term_has(tty->term, TTYC_SE))
@@ -651,8 +667,11 @@ tty_draw_line(struct tty *tty, const struct window_pane *wp,
 	struct grid_cell	 tmpgc;
 	struct utf8_data	 ud;
 	u_int			 i, sx;
+	int			 flags;
 
-	tty_update_mode(tty, tty->mode & ~MODE_CURSOR, s);
+	flags = tty->flags & TTY_NOCURSOR;
+	tty->flags |= TTY_NOCURSOR;
+	tty_update_mode(tty, tty->mode, s);
 
 	sx = screen_size_x(s);
 	if (sx > s->grid->linedata[s->grid->hsize + py].cellsize)
@@ -687,18 +706,20 @@ tty_draw_line(struct tty *tty, const struct window_pane *wp,
 			tty_cell(tty, gc, wp);
 	}
 
-	if (sx >= tty->sx) {
-		tty_update_mode(tty, tty->mode, s);
-		return;
-	}
-	tty_attributes(tty, &grid_default_cell, wp);
+	if (sx < tty->sx) {
+		tty_attributes(tty, &grid_default_cell, wp);
 
-	tty_cursor(tty, ox + sx, oy + py);
-	if (sx != screen_size_x(s) && ox + screen_size_x(s) >= tty->sx &&
-	    tty_term_has(tty->term, TTYC_EL) && !tty_fake_bce(tty, wp))
-		tty_putcode(tty, TTYC_EL);
-	else
-		tty_repeat_space(tty, screen_size_x(s) - sx);
+		tty_cursor(tty, ox + sx, oy + py);
+		if (sx != screen_size_x(s) &&
+		    ox + screen_size_x(s) >= tty->sx &&
+		    tty_term_has(tty->term, TTYC_EL) &&
+		    !tty_fake_bce(tty, wp))
+			tty_putcode(tty, TTYC_EL);
+		else
+			tty_repeat_space(tty, screen_size_x(s) - sx);
+	}
+
+	tty->flags = (tty->flags & ~TTY_NOCURSOR) | flags;
 	tty_update_mode(tty, tty->mode, s);
 }
 
@@ -708,7 +729,6 @@ tty_write(
 {
 	struct window_pane	*wp = ctx->wp;
 	struct client		*c;
-	u_int		 	 i;
 
 	/* wp can be NULL if updating the screen but not the terminal. */
 	if (wp == NULL)
@@ -719,9 +739,8 @@ tty_write(
 	if (!window_pane_visible(wp) || wp->flags & PANE_DROP)
 		return;
 
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		c = ARRAY_ITEM(&clients, i);
-		if (c == NULL || c->session == NULL || c->tty.term == NULL)
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->session == NULL || c->tty.term == NULL)
 			continue;
 		if (c->flags & CLIENT_SUSPENDED)
 			continue;
@@ -1398,12 +1417,8 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 		tty_putcode(tty, TTYC_BOLD);
 	if (changed & GRID_ATTR_DIM)
 		tty_putcode(tty, TTYC_DIM);
-	if (changed & GRID_ATTR_ITALICS) {
-		if (tty_term_has(tty->term, TTYC_SITM))
-			tty_putcode(tty, TTYC_SITM);
-		else
-			tty_putcode(tty, TTYC_SMSO);
-	}
+	if (changed & GRID_ATTR_ITALICS)
+		tty_set_italics(tty);
 	if (changed & GRID_ATTR_UNDERSCORE)
 		tty_putcode(tty, TTYC_SMUL);
 	if (changed & GRID_ATTR_BLINK)

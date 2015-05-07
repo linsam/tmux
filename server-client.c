@@ -29,6 +29,7 @@
 
 #include "tmux.h"
 
+void	server_client_key_table(struct client *, const char *);
 void	server_client_check_focus(struct window_pane *);
 void	server_client_check_resize(struct window_pane *);
 int	server_client_check_mouse(struct client *);
@@ -44,12 +45,20 @@ void	server_client_msg_command(struct client *, struct imsg *);
 void	server_client_msg_identify(struct client *, struct imsg *);
 void	server_client_msg_shell(struct client *);
 
+/* Set client key table. */
+void
+server_client_key_table(struct client *c, const char *name)
+{
+	key_bindings_unref_table(c->keytable);
+	c->keytable = key_bindings_get_table(name, 1);
+	c->keytable->references++;
+}
+
 /* Create a new client. */
 void
 server_client_create(int fd)
 {
 	struct client	*c;
-	u_int		 i;
 
 	setblocking(fd, 0);
 
@@ -84,7 +93,7 @@ server_client_create(int fd)
 	RB_INIT(&c->status_old);
 
 	c->message_string = NULL;
-	ARRAY_INIT(&c->message_log);
+	TAILQ_INIT(&c->message_log);
 
 	c->prompt_string = NULL;
 	c->prompt_buffer = NULL;
@@ -92,15 +101,12 @@ server_client_create(int fd)
 
 	c->flags |= CLIENT_FOCUSED;
 
+	c->keytable = key_bindings_get_table("root", 1);
+	c->keytable->references++;
+
 	evtimer_set(&c->repeat_timer, server_client_repeat_timer, c);
 
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		if (ARRAY_ITEM(&clients, i) == NULL) {
-			ARRAY_SET(&clients, i, c);
-			return;
-		}
-	}
-	ARRAY_ADD(&clients, c);
+	TAILQ_INSERT_TAIL(&clients, c, entry);
 	log_debug("new client %d", fd);
 }
 
@@ -131,13 +137,9 @@ server_client_open(struct client *c, char **cause)
 void
 server_client_lost(struct client *c)
 {
-	struct message_entry	*msg;
-	u_int			 i;
+	struct message_entry	*msg, *msg1;
 
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		if (ARRAY_ITEM(&clients, i) == c)
-			ARRAY_SET(&clients, i, NULL);
-	}
+	TAILQ_REMOVE(&clients, c, entry);
 	log_debug("lost client %d", c->ibuf.fd);
 
 	/*
@@ -163,17 +165,19 @@ server_client_lost(struct client *c)
 
 	evtimer_del(&c->repeat_timer);
 
+	key_bindings_unref_table(c->keytable);
+
 	if (event_initialized(&c->identify_timer))
 		evtimer_del(&c->identify_timer);
 
 	free(c->message_string);
 	if (event_initialized(&c->message_timer))
 		evtimer_del(&c->message_timer);
-	for (i = 0; i < ARRAY_LENGTH(&c->message_log); i++) {
-		msg = &ARRAY_ITEM(&c->message_log, i);
+	TAILQ_FOREACH_SAFE(msg, &c->message_log, entry, msg1) {
 		free(msg->msg);
+		TAILQ_REMOVE(&c->message_log, msg, entry);
+		free(msg);
 	}
-	ARRAY_FREE(&c->message_log);
 
 	free(c->prompt_string);
 	free(c->prompt_buffer);
@@ -189,14 +193,7 @@ server_client_lost(struct client *c)
 	if (event_initialized(&c->event))
 		event_del(&c->event);
 
-	for (i = 0; i < ARRAY_LENGTH(&dead_clients); i++) {
-		if (ARRAY_ITEM(&dead_clients, i) == NULL) {
-			ARRAY_SET(&dead_clients, i, c);
-			break;
-		}
-	}
-	if (i == ARRAY_LENGTH(&dead_clients))
-		ARRAY_ADD(&dead_clients, c);
+	TAILQ_INSERT_TAIL(&dead_clients, c, entry);
 	c->flags |= CLIENT_DEAD;
 
 	server_add_accept(0); /* may be more file descriptors now */
@@ -247,16 +244,14 @@ server_client_status_timer(void)
 	struct client	*c;
 	struct session	*s;
 	struct timeval	 tv;
-	u_int		 i;
 	int		 interval;
 	time_t		 difference;
 
 	if (gettimeofday(&tv, NULL) != 0)
 		fatal("gettimeofday failed");
 
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		c = ARRAY_ITEM(&clients, i);
-		if (c == NULL || c->session == NULL)
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->session == NULL)
 			continue;
 		if (c->message_string != NULL || c->prompt_string != NULL) {
 			/*
@@ -381,7 +376,7 @@ server_client_check_mouse(struct client *c)
 		c->tty.mouse_drag_release = NULL;
 
 		c->tty.mouse_drag_flag = 0;
-		return (KEYC_NONE);
+		return (KEYC_MOUSE); /* not a key, but still may want to pass */
 	}
 
 	/* Convert to a key binding. */
@@ -532,16 +527,19 @@ void
 server_client_handle_key(struct client *c, int key)
 {
 	struct mouse_event	*m = &c->tty.mouse;
-	struct session		*s;
+	struct session		*s = c->session;
 	struct window		*w;
 	struct window_pane	*wp;
 	struct timeval		 tv;
-	struct key_binding	*bd;
-	int		      	 xtimeout, isprefix, ispaste;
+	struct key_table	*table = c->keytable;
+	struct key_binding	 bd_find, *bd;
+	int			 xtimeout;
 
 	/* Check the client is good to accept input. */
-	if ((c->flags & (CLIENT_DEAD|CLIENT_SUSPENDED)) != 0)
+	if (s == NULL || (c->flags & (CLIENT_DEAD|CLIENT_SUSPENDED)) != 0)
 		return;
+	w = s->curw->window;
+	wp = w->active;
 
 	/* No session, do nothing. */
 	if (c->session == NULL)
@@ -557,7 +555,7 @@ server_client_handle_key(struct client *c, int key)
 	    sizeof s->last_activity_time);
 	memcpy(&s->activity_time, &c->activity_time, sizeof s->activity_time);
 
-	/* Special case: number keys jump to pane in identify mode. */
+	/* Number keys jump to pane in identify mode. */
 	if (c->flags & CLIENT_IDENTIFY && key >= '0' && key <= '9') {
 		if (c->flags & CLIENT_READONLY)
 			return;
@@ -598,74 +596,88 @@ server_client_handle_key(struct client *c, int key)
 	} else
 		m->valid = 0;
 
-	/* Is this a prefix key? */
-	if (key == options_get_number(&s->options, "prefix"))
-		isprefix = 1;
-	else if (key == options_get_number(&s->options, "prefix2"))
-		isprefix = 1;
-	else
-		isprefix = 0;
-
-	/* Treat prefix as a regular key when pasting is detected. */
-	ispaste = server_client_assume_paste(s);
-	if (ispaste)
-		isprefix = 0;
-
-	/* No previous prefix key. */
-	if (!(c->flags & CLIENT_PREFIX)) {
-		if (isprefix) {
-			c->flags |= CLIENT_PREFIX;
-			server_status_client(c);
-			return;
-		}
-
-		/* Try as a non-prefix key binding. */
-		if (ispaste || (bd = key_bindings_lookup(key)) == NULL) {
-			if (!(c->flags & CLIENT_READONLY))
-				window_pane_key(wp, c, s, key, m);
-		} else
-			key_bindings_dispatch(bd, c, m);
-		return;
-	}
-
-	/* Prefix key already pressed. Reset prefix and lookup key. */
-	c->flags &= ~CLIENT_PREFIX;
-	server_status_client(c);
-	if ((bd = key_bindings_lookup(key | KEYC_PREFIX)) == NULL) {
-		/* If repeating, treat this as a key, else ignore. */
-		if (c->flags & CLIENT_REPEAT) {
-			c->flags &= ~CLIENT_REPEAT;
-			if (isprefix)
-				c->flags |= CLIENT_PREFIX;
-			else if (!(c->flags & CLIENT_READONLY))
-				window_pane_key(wp, c, s, key, m);
-		}
-		return;
-	}
-
-	/* If already repeating, but this key can't repeat, skip it. */
-	if (c->flags & CLIENT_REPEAT && !bd->can_repeat) {
-		c->flags &= ~CLIENT_REPEAT;
-		if (isprefix)
-			c->flags |= CLIENT_PREFIX;
-		else if (!(c->flags & CLIENT_READONLY))
+	/* Treat everything as a regular key when pasting is detected. */
+	if (server_client_assume_paste(s)) {
+		if (!(c->flags & CLIENT_READONLY))
 			window_pane_key(wp, c, s, key, m);
 		return;
 	}
 
-	/* If this key can repeat, reset the repeat flags and timer. */
-	xtimeout = options_get_number(&s->options, "repeat-time");
-	if (xtimeout != 0 && bd->can_repeat) {
-		c->flags |= CLIENT_PREFIX|CLIENT_REPEAT;
+retry:
+	/* Try to see if there is a key binding in the current table. */
+	bd_find.key = key;
+	bd = RB_FIND(key_bindings, &table->key_bindings, &bd_find);
+	if (bd != NULL) {
+		/*
+		 * Key was matched in this table. If currently repeating but a
+		 * non-repeating binding was found, stop repeating and try
+		 * again in the root table.
+		 */
+		if ((c->flags & CLIENT_REPEAT) && !bd->can_repeat) {
+			server_client_key_table(c, "root");
+			c->flags &= ~CLIENT_REPEAT;
+			server_status_client(c);
+			goto retry;
+		}
 
-		tv.tv_sec = xtimeout / 1000;
-		tv.tv_usec = (xtimeout % 1000) * 1000L;
-		evtimer_del(&c->repeat_timer);
-		evtimer_add(&c->repeat_timer, &tv);
+		/*
+		 * Take a reference to this table to make sure the key binding
+		 * doesn't disappear.
+		 */
+		table->references++;
+
+		/*
+		 * If this is a repeating key, start the timer. Otherwise reset
+		 * the client back to the root table.
+		 */
+		xtimeout = options_get_number(&s->options, "repeat-time");
+		if (xtimeout != 0 && bd->can_repeat) {
+			c->flags |= CLIENT_REPEAT;
+
+			tv.tv_sec = xtimeout / 1000;
+			tv.tv_usec = (xtimeout % 1000) * 1000L;
+			evtimer_del(&c->repeat_timer);
+			evtimer_add(&c->repeat_timer, &tv);
+		} else {
+			c->flags &= ~CLIENT_REPEAT;
+			server_client_key_table(c, "root");
+		}
+		server_status_client(c);
+
+		/* Dispatch the key binding. */
+		key_bindings_dispatch(bd, c, m);
+		key_bindings_unref_table(table);
+		return;
 	}
 
-	/* Dispatch the command. */
-	key_bindings_dispatch(bd, c, m);
+	/*
+	 * No match in this table. If repeating, switch the client back to the
+	 * root table and try again.
+	 */
+	if (c->flags & CLIENT_REPEAT) {
+		server_client_key_table(c, "root");
+		c->flags &= ~CLIENT_REPEAT;
+		server_status_client(c);
+		goto retry;
+	}
+
+	/* If no match and we're not in the root table, that's it. */
+	if (strcmp(c->keytable->name, "root") != 0) {
+		server_client_key_table(c, "root");
+		server_status_client(c);
+		return;
+	}
+
+	/*
+	 * No match, but in the root table. Prefix switches to the prefix table
+	 * and everything else is passed through.
+	 */
+	if (key == options_get_number(&s->options, "prefix") ||
+	    key == options_get_number(&s->options, "prefix2")) {
+		server_client_key_table(c, "prefix");
+		server_status_client(c);
+	} else if (!(c->flags & CLIENT_READONLY))
+		window_pane_key(wp, c, s, key, m);
 }
 
 /* Client functions that need to happen every loop. */
@@ -675,13 +687,8 @@ server_client_loop(void)
 	struct client		*c;
 	struct window		*w;
 	struct window_pane	*wp;
-	u_int		 	 i;
 
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		c = ARRAY_ITEM(&clients, i);
-		if (c == NULL)
-			continue;
-
+	TAILQ_FOREACH(c, &clients, entry) {
 		server_client_check_exit(c);
 		if (c->session != NULL) {
 			server_client_check_redraw(c);
@@ -693,11 +700,7 @@ server_client_loop(void)
 	 * Any windows will have been redrawn as part of clients, so clear
 	 * their flags now. Also check pane focus and resize.
 	 */
-	for (i = 0; i < ARRAY_LENGTH(&windows); i++) {
-		w = ARRAY_ITEM(&windows, i);
-		if (w == NULL)
-			continue;
-
+	RB_FOREACH(w, windows, &windows) {
 		w->flags &= ~WINDOW_REDRAW;
 		TAILQ_FOREACH(wp, &w->panes, entry) {
 			if (wp->fd != -1) {
@@ -742,7 +745,6 @@ server_client_check_resize(struct window_pane *wp)
 void
 server_client_check_focus(struct window_pane *wp)
 {
-	u_int		 i;
 	struct client	*c;
 	int		 push;
 
@@ -770,12 +772,8 @@ server_client_check_focus(struct window_pane *wp)
 	 * If our window is the current window in any focused clients with an
 	 * attached session, we're focused.
 	 */
-	for (i = 0; i < ARRAY_LENGTH(&clients); i++) {
-		c = ARRAY_ITEM(&clients, i);
-		if (c == NULL || c->session == NULL)
-			continue;
-
-		if (!(c->flags & CLIENT_FOCUSED))
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->session == NULL || !(c->flags & CLIENT_FOCUSED))
 			continue;
 		if (c->session->flags & SESSION_UNATTACHED)
 			continue;
@@ -863,9 +861,9 @@ server_client_repeat_timer(unused int fd, unused short events, void *data)
 	struct client	*c = data;
 
 	if (c->flags & CLIENT_REPEAT) {
-		if (c->flags & CLIENT_PREFIX)
-			server_status_client(c);
-		c->flags &= ~(CLIENT_PREFIX|CLIENT_REPEAT);
+		server_client_key_table(c, "root");
+		c->flags &= ~CLIENT_REPEAT;
+		server_status_client(c);
 	}
 }
 
@@ -892,14 +890,12 @@ void
 server_client_check_redraw(struct client *c)
 {
 	struct session		*s = c->session;
+	struct tty		*tty = &c->tty;
 	struct window_pane	*wp;
 	int		 	 flags, redraw;
 
 	if (c->flags & (CLIENT_CONTROL|CLIENT_SUSPENDED))
 		return;
-
-	flags = c->tty.flags & TTY_FREEZE;
-	c->tty.flags &= ~TTY_FREEZE;
 
 	if (c->flags & (CLIENT_REDRAW|CLIENT_STATUS)) {
 		if (options_get_number(&s->options, "set-titles"))
@@ -916,27 +912,39 @@ server_client_check_redraw(struct client *c)
 			c->flags &= ~CLIENT_STATUS;
 	}
 
+	flags = tty->flags & (TTY_FREEZE|TTY_NOCURSOR);
+	tty->flags = (tty->flags & ~TTY_FREEZE) | TTY_NOCURSOR;
+
 	if (c->flags & CLIENT_REDRAW) {
+		tty_update_mode(tty, tty->mode, NULL);
 		screen_redraw_screen(c, 1, 1, 1);
 		c->flags &= ~(CLIENT_STATUS|CLIENT_BORDERS);
 	} else if (c->flags & CLIENT_REDRAWWINDOW) {
+		tty_update_mode(tty, tty->mode, NULL);
 		TAILQ_FOREACH(wp, &c->session->curw->window->panes, entry)
 			screen_redraw_pane(c, wp);
 		c->flags &= ~CLIENT_REDRAWWINDOW;
 	} else {
 		TAILQ_FOREACH(wp, &c->session->curw->window->panes, entry) {
-			if (wp->flags & PANE_REDRAW)
+			if (wp->flags & PANE_REDRAW) {
+				tty_update_mode(tty, tty->mode, NULL);
 				screen_redraw_pane(c, wp);
+			}
 		}
 	}
 
-	if (c->flags & CLIENT_BORDERS)
+	if (c->flags & CLIENT_BORDERS) {
+		tty_update_mode(tty, tty->mode, NULL);
 		screen_redraw_screen(c, 0, 0, 1);
+	}
 
-	if (c->flags & CLIENT_STATUS)
+	if (c->flags & CLIENT_STATUS) {
+		tty_update_mode(tty, tty->mode, NULL);
 		screen_redraw_screen(c, 0, 1, 0);
+	}
 
-	c->tty.flags |= flags;
+	tty->flags = (tty->flags & ~(TTY_FREEZE|TTY_NOCURSOR)) | flags;
+	tty_update_mode(tty, tty->mode, NULL);
 
 	c->flags &= ~(CLIENT_REDRAW|CLIENT_STATUS|CLIENT_BORDERS);
 }

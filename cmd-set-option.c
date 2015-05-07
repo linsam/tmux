@@ -186,8 +186,8 @@ cmd_set_option_exec(struct cmd *self, struct cmd_q *cmdq)
 	/* When the pane-status option has been changed, resize panes. */
 	if (strcmp(oe->name, "pane-status") == 0 ||
 	    strcmp(oe->name, "pane-status-position") == 0) {
-		for (i = 0; i < ARRAY_LENGTH(&windows); i++) {
-			if ((w = ARRAY_ITEM(&windows, i)) == NULL)
+		RB_FOREACH(w, windows, &windows) {
+			if (w == NULL)
 				continue;
 			layout_fix_panes(w, w->sx, w->sy);
 		}

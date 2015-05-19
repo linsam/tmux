@@ -2999,6 +2999,9 @@ see the
 option.
 Attributes are ignored.
 .Pp
+.It Ic pane-active-status-style
+Set the style of the active pane's status line.
+.Pp
 .It Ic pane-base-index Ar index
 Like
 .Ic base-index ,
@@ -3012,6 +3015,18 @@ see the
 .Ic message-command-style
 option.
 Attributes are ignored.
+.Pp
+.It Xo Ic pane-status
+.Op Ic off | top | bottom
+.Xc
+Turn pane status lines off or set their position.
+A pane's status line is shown on the pane border.
+.Pp
+.It Ic pane-status-format Ar format
+Set the text shown in pane status lines.
+.Pp
+.It Ic pane-status-style Ar style
+Set the style of pane status lines.
 .Pp
 .It Xo Ic remain-on-exit
 .Op Ic on | off

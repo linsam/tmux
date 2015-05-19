@@ -183,6 +183,12 @@ cmd_set_option_exec(struct cmd *self, struct cmd_q *cmdq)
 		}
 	}
 
+	/* When the pane-status option has been changed, resize panes. */
+	if (strcmp(oe->name, "pane-status") == 0) {
+		RB_FOREACH(w, windows, &windows)
+			layout_fix_panes(w, w->sx, w->sy);
+	}
+
 	/* Update sizes and redraw. May not need it but meh. */
 	recalculate_sizes();
 	TAILQ_FOREACH(c, &clients, entry) {

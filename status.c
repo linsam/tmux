@@ -396,10 +396,10 @@ pane_status_redraw(struct client *c)
 		if (!pane_status) {
 			continue;
 		}
-		memcpy(&stdgc, &grid_default_cell, sizeof stdgc);
-		colour_set_fg(&stdgc, options_get_number(&wp->window->options, "pane-status-fg"));
-		colour_set_bg(&stdgc, options_get_number(&wp->window->options, "pane-status-bg"));
-		stdgc.attr |= options_get_number(&wp->window->options, "pane-status-attr");
+		if (wp == w->active)
+			style_apply(&stdgc, &wp->window->options, "pane-active-status-style");
+		else
+			style_apply(&stdgc, &wp->window->options, "pane-status-style");
 		screen_init(&pane_status->status, wp->sx, 1, 0);
 		msg = status_replace(c, NULL, wp, options_get_string(&wp->window->options, "pane-status-format"), time(NULL));
 		len = screen_write_strlen(utf8flag, "%s", msg);

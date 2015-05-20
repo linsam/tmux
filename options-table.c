@@ -609,6 +609,11 @@ const struct options_table_entry window_options_table[] = {
 	  .default_str = "fg=green"
 	},
 
+	{ .name = "pane-active-status-style",
+	  .type = OPTIONS_TABLE_STYLE,
+	  .default_str = "bg=green"
+	},
+
 	{ .name = "pane-base-index",
 	  .type = OPTIONS_TABLE_NUMBER,
 	  .minimum = 0,
@@ -636,24 +641,6 @@ const struct options_table_entry window_options_table[] = {
 	{ .name = "pane-status",
 	  .type = OPTIONS_TABLE_FLAG,
 	  .default_num = 1
-	},
-
-	{ .name = "pane-status-attr",
-	  .type = OPTIONS_TABLE_ATTRIBUTES,
-	  .default_num = 0,
-	  .style = "pane-status-style"
-	},
-
-	{ .name = "pane-status-bg",
-	  .type = OPTIONS_TABLE_COLOUR,
-	  .default_num = 2,
-	  .style = "pane-status-style"
-	},
-
-	{ .name = "pane-status-fg",
-	  .type = OPTIONS_TABLE_COLOUR,
-	  .default_num = 0,
-	  .style = "pane-status-style"
 	},
 
 	{ .name = "pane-status-format",

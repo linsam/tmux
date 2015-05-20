@@ -419,7 +419,8 @@ window_get_active_at(struct window *w, u_int x, u_int y)
 	u_int			 yshift;
 
 	has_pane_status = options_get_number(&w->options, "pane-status");
-	yshift = (has_pane_status && options_get_number(&w->options, "pane-status-position") == 0);
+	yshift = (has_pane_status == 1);
+	has_pane_status = !!has_pane_status;
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
@@ -1194,7 +1195,7 @@ window_pane_find_up(struct window_pane *wp)
 	int			 found;
 	int			 has_pane_status;
 
-	has_pane_status = options_get_number(&wp->window->options, "pane-status");
+	has_pane_status = !!options_get_number(&wp->window->options, "pane-status");
 
 	if (wp == NULL || !window_pane_visible(wp))
 		return (NULL);
@@ -1243,7 +1244,7 @@ window_pane_find_down(struct window_pane *wp)
 	int			 found;
 	int			 has_pane_status;
 
-	has_pane_status = options_get_number(&wp->window->options, "pane-status");
+	has_pane_status = !!options_get_number(&wp->window->options, "pane-status");
 
 	if (wp == NULL || !window_pane_visible(wp))
 		return (NULL);

@@ -130,13 +130,12 @@ cmd_resize_pane_mouse_update(struct client *c, struct mouse_event *m)
 	int			 found;
 	u_int			 y, ly;
 	int 			 has_pane_status;
-	int 			 pane_status_pos;
 	int			 yshift;
 
 	has_pane_status = options_get_number(&c->session->curw->window->options, "pane-status");
-	pane_status_pos = options_get_number(&c->session->curw->window->options, "pane-status-position");
 
-	yshift = (has_pane_status && pane_status_pos == 0);
+	has_pane_status = !!has_pane_status;
+	yshift = (has_pane_status == 1);
 
 	wl = cmd_mouse_window(m, NULL);
 	if (wl == NULL) {

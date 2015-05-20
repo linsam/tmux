@@ -170,16 +170,14 @@ layout_fix_panes(struct window *w, u_int wsx, u_int wsy)
 	struct window_pane	*wp;
 	struct layout_cell	*lc;
 	u_int			 sx, sy;
-	int 			 has_pane_status;
-	u_int			 pspos;
+	int 			 pane_status;
 	u_int			 yshift;
 	u_int			 ylenshift;
 
-	has_pane_status = options_get_number(&w->options, "pane-status");
-	pspos = options_get_number(&w->options, "pane-status-position");
+	pane_status = options_get_number(&w->options, "pane-status");
 
-	yshift = (has_pane_status && pspos == 0) ? 1 : 0;
-	ylenshift = (has_pane_status) ? 1 : 0;
+	yshift = (pane_status == 1) ? 1 : 0;
+	ylenshift = (pane_status != 0) ? 1 : 0;
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if ((lc = wp->layout_cell) == NULL)

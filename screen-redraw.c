@@ -58,7 +58,8 @@ screen_redraw_cell_border1(struct window_pane *wp, u_int px, u_int py)
 	int yshift;
 
 	has_pane_status = options_get_number(&wp->window->options, "pane-status");
-	yshift = has_pane_status && options_get_number(&wp->window->options, "pane-status-position") == 0;
+	yshift = (has_pane_status == 1);
+	has_pane_status = !!has_pane_status;
 
 	/* Inside pane. */
 	if (px >= wp->xoff && px < wp->xoff + wp->sx &&
@@ -113,13 +114,12 @@ screen_redraw_check_cell(struct client *c, u_int px, u_int py,
 	struct window_pane	*wp;
 	int			 borders;
 	int			 has_pane_status;
-	int			 pspos;
 	int			 yoffset;
 
 	has_pane_status = options_get_number(&w->options, "pane-status");
-	pspos = options_get_number(&w->options, "pane-status-position");
 
-	yoffset = (has_pane_status && pspos == 0);
+	yoffset = (has_pane_status == 1);
+	has_pane_status = !!has_pane_status;
 
 	if (px > w->sx || py > w->sy)
 		return (CELL_OUTSIDE);
@@ -196,7 +196,7 @@ screen_redraw_check_active(u_int px, u_int py, int type, struct window *w,
 {
 	int has_pane_status;
 
-	has_pane_status = options_get_number(&wp->window->options, "pane-status");
+	has_pane_status = !!options_get_number(&wp->window->options, "pane-status");
 
 	/* Is this off the active pane border? */
 	if (screen_redraw_cell_border1(w->active, px, py) != 1)
@@ -243,7 +243,7 @@ screen_redraw_draw_pane_status(struct client *c, u_int top)
 	struct pane_status	*ps = TAILQ_FIRST(&c->pane_statuses);
 	u_int			 pspos;
 
-	pspos = options_get_number(&w->options, "pane-status-position");
+	pspos = options_get_number(&w->options, "pane-status") - 1;
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;

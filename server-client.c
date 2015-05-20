@@ -342,7 +342,8 @@ server_client_check_mouse(struct client *c)
 			y = m->statusat - 1;
 
 		has_pane_status = options_get_number(&s->curw->window->options, "pane-status");
-		yshift = (has_pane_status && options_get_number(&s->curw->window->options, "pane-status-position") == 0);
+		yshift = (has_pane_status == 1);
+		has_pane_status = !!has_pane_status;
 
 		TAILQ_FOREACH(wp, &s->curw->window->panes, entry) {
 			if ((wp->xoff + wp->sx == x &&

@@ -50,6 +50,9 @@ const char *options_table_status_position_list[] = {
 const char *options_table_bell_action_list[] = {
 	"none", "any", "current", NULL
 };
+const char *options_table_pane_status_list[] = {
+	"off", "top", "bottom", NULL
+};
 
 /* Server options. */
 const struct options_table_entry server_options_table[] = {
@@ -639,24 +642,19 @@ const struct options_table_entry window_options_table[] = {
 	},
 
 	{ .name = "pane-status",
-	  .type = OPTIONS_TABLE_FLAG,
+	  .type = OPTIONS_TABLE_CHOICE,
+	  .choices = options_table_pane_status_list,
 	  .default_num = 1
 	},
 
 	{ .name = "pane-status-format",
 	  .type = OPTIONS_TABLE_STRING,
-	  .default_str = "[#T]"
-	},
-
-	{ .name = "pane-status-position",
-	  .type = OPTIONS_TABLE_CHOICE,
-	  .choices = options_table_status_position_list,
-	  .default_num = 1
+	  .default_str = "#{pane_index} \"#{pane_title}\""
 	},
 
 	{ .name = "pane-status-style",
 	  .type = OPTIONS_TABLE_STYLE,
-	  .default_str = "default"
+	  .default_str = "fg=green"
 	},
 
 	{ .name = "remain-on-exit",

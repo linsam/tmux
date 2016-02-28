@@ -524,7 +524,10 @@ pane_status_redraw(struct client *c)
 		else
 			style_apply(&stdgc, wp->window->options, "pane-status-style");
 		screen_init(&pane_status->status, wp->sx, 1, 0);
-		msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-status-format"), time(NULL));
+		if (wp == w->active)
+			msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-active-status-format"), time(NULL));
+		else
+			msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-status-format"), time(NULL));
 		len = screen_write_strlen("%s", msg);
 		if (len > wp->sx) {
 			len = wp->sx;

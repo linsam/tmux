@@ -673,6 +673,12 @@ const struct options_table_entry options_table[] = {
 	  .default_str = "fg=green"
 	},
 
+	{ .name = "pane-active-status-format",
+	  .type = OPTIONS_TABLE_STRING,
+	  .scope = OPTIONS_TABLE_WINDOW,
+	  .default_str = "* #{pane_index} \"#{pane_title}\""
+	},
+
 	{ .name = "pane-active-status-style",
 	  .type = OPTIONS_TABLE_STYLE,
 	  .scope = OPTIONS_TABLE_WINDOW,

@@ -2111,7 +2111,7 @@ void	 screen_write_setselection(struct screen_write_ctx *, u_char *, u_int);
 void	 screen_write_rawstring(struct screen_write_ctx *, u_char *, u_int);
 
 /* screen-redraw.c */
-void	 screen_redraw_draw_pane_status(struct client *c, u_int top);
+void	 screen_redraw_draw_pane_status(struct client *c, u_int, u_int);
 void	 screen_redraw_screen(struct client *, int, int, int);
 void	 screen_redraw_pane(struct client *, struct window_pane *);
 

@@ -503,10 +503,17 @@ pane_status_redraw(struct client *c)
 	struct pane_status	*t;
 	int			 diff = 0;
 	unsigned int		 len;
+	u_int			 pane_stat;
+	u_int			 xoff;
 
-	if (options_get_number(w->options, "pane-status") == 0) {
+	pane_stat = options_get_number(w->options, "pane-status");
+	if (pane_stat == 0) {
 		return 0;
 	}
+	if (pane_stat == 3 || pane_stat == 4)
+		xoff = 4;
+	else
+		xoff = 0;
 
 	memcpy(&old_pane_statuses, &c->pane_statuses, sizeof old_pane_statuses);
 	TAILQ_INIT(&c->pane_statuses);
@@ -529,12 +536,16 @@ pane_status_redraw(struct client *c)
 		else
 			msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-status-format"), time(NULL));
 		/* TODO: csterlen? */
-		len = screen_write_strlen("%s", msg);
-		if (len > wp->sx) {
-			len = wp->sx;
+		len = screen_write_cstrlen("%s", msg);
+		if (len > wp->sx - xoff) {
+			len = wp->sx - xoff;
 		}
+		if (pane_stat == 3 || pane_stat == 4)
+			screen_resize(&pane_status->status, len, 1, 0);
 		screen_write_start(&ctx, NULL, &pane_status->status);
 		screen_write_cursormove(&ctx, 0, 0);
+		if (pane_stat == 3 || pane_stat == 4)
+			screen_write_clearline(&ctx);
 		screen_write_cnputs(&ctx, len, &stdgc, "%s", msg);
 		screen_write_stop(&ctx);
 		free(msg);

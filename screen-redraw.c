@@ -57,7 +57,7 @@ screen_redraw_cell_border1(struct window_pane *wp, u_int px, u_int py, int pane_
 	int yshift;
 
 	yshift = (pane_status == 1);
-	pane_status = !!pane_status;
+	pane_status = !!(pane_status == 1 || pane_status == 2);
 
 	/* Inside pane. */
 	if (px >= wp->xoff && px < wp->xoff + wp->sx &&
@@ -266,11 +266,16 @@ screen_redraw_draw_pane_status(struct client *c, u_int pane_status, u_int top)
 	struct window_pane	*wp;
 	struct pane_status	*ps = TAILQ_FIRST(&c->pane_statuses);
 	u_int			 pspos;
+	u_int			 xoff;
 
 	if (pane_status == 1 || pane_status == 3)
 		pspos = 0;
 	else
 		pspos = 1;
+	if (pane_status == 3 || pane_status == 4)
+		xoff = 2;
+	else
+		xoff = 0;
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;
@@ -278,9 +283,9 @@ screen_redraw_draw_pane_status(struct client *c, u_int pane_status, u_int top)
 			fatalx("pane status not found");
 		}
 		if (pspos) {
-			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff + wp->sy);
+			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff + xoff, top + wp->yoff + wp->sy);
 		} else {
-			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff, top + wp->yoff - 1);
+			tty_draw_line(&c->tty, NULL, &ps->status, 0, wp->xoff + xoff, top + wp->yoff - 1);
 		}
 		ps = TAILQ_NEXT(ps, entry);
 	}

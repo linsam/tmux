@@ -51,7 +51,7 @@ const char *options_table_bell_action_list[] = {
 	"none", "any", "current", "other", NULL
 };
 const char *options_table_pane_status_list[] = {
-	"off", "top", "bottom", NULL
+	"off", "top", "bottom", "bordertop", "borderbottom", NULL
 };
 
 /* Server options. */

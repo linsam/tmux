@@ -34,6 +34,7 @@
 
 int	layout_resize_pane_grow(struct layout_cell *, enum layout_type, int);
 int	layout_resize_pane_shrink(struct layout_cell *, enum layout_type, int);
+int	layout_need_status(struct layout_cell *, int);
 
 struct layout_cell *
 layout_create_cell(struct layout_cell *lcparent)
@@ -163,6 +164,30 @@ layout_fix_offsets(struct layout_cell *lc)
 	}
 }
 
+/*
+ * Returns 1 if we need to reserve space for the pane status line. This is the
+ * case for the most upper panes only.
+ */
+int
+layout_need_status(struct layout_cell *lc, int at_top)
+{
+	struct layout_cell	*first_lc;
+
+	if (lc->parent) {
+		if (lc->parent->type == LAYOUT_LEFTRIGHT)
+			return (layout_need_status(lc->parent, at_top));
+
+		if (at_top)
+			first_lc = TAILQ_FIRST(&lc->parent->cells);
+		else
+			first_lc = TAILQ_LAST(&lc->parent->cells,layout_cells);
+		if (lc == first_lc)
+			return (layout_need_status(lc->parent, at_top));
+		return (0);
+	}
+	return (1);
+}
+
 /* Update pane offsets and sizes based on their cells. */
 void
 layout_fix_panes(struct window *w, u_int wsx, u_int wsy)
@@ -176,14 +201,48 @@ layout_fix_panes(struct window *w, u_int wsx, u_int wsy)
 
 	pane_status = options_get_number(w->options, "pane-status");
 
-	yshift = (pane_status == 1) ? 1 : 0;
-	ylenshift = (pane_status != 0) ? 1 : 0;
-
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if ((lc = wp->layout_cell) == NULL)
 			continue;
 		wp->xoff = lc->xoff;
 		wp->yoff = lc->yoff;
+
+		/* Cases:
+		 * value		yoff	sy
+		 * 0 no status		0	0
+		 * 1 top		+1	-1
+		 * 2 bottom		0	-1
+		 * 3 bordertop		+1t	-1t
+		 * 4 borderbottom	0	-1b
+		 */
+		switch (pane_status) {
+			case 0:
+				yshift = 0;
+				ylenshift = 0;
+				break;
+			case 1:
+				yshift = 1;
+				ylenshift = 1;
+				break;
+			case 2:
+				yshift = 0;
+				ylenshift = 1;
+				break;
+			case 3:
+				yshift = layout_need_status(lc, 1);
+				ylenshift = yshift;
+				break;
+			case 4:
+				yshift = 0;
+				ylenshift = layout_need_status(lc, 0);
+				break;
+			default:
+				/* Assert? Pretend no status? */
+				yshift = 0;
+				ylenshift = 0;
+				break;
+		}
+
 		if (yshift)
 			wp->yoff += 1;
 

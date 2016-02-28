@@ -113,12 +113,30 @@ screen_redraw_check_cell(struct client *c, u_int px, u_int py, int pane_status,
 	int			 borders;
 	int			 yoffset;
 	int			 pstatus;
+	u_int			 right;
+	u_int			 line;
 
-	yoffset = (pane_status == 1);
-	pstatus = !!pane_status;
+	yoffset = (pane_status == 1 || pane_status == 3);
+	pstatus = !!(pane_status == 1 || pane_status == 2);
 
 	if (px > w->sx || py > w->sy)
 		return (CELL_OUTSIDE);
+
+	if (pane_status > 2) {
+		TAILQ_FOREACH(wp, &w->panes, entry) {
+			if (!window_pane_visible(wp))
+				continue;
+
+			if (pane_status == 3)
+				line = wp->yoff - 1;
+			else
+				line = wp->yoff + wp->sy;
+			right = wp->xoff + 2 + wp->status_size - 1;
+
+			if (py == line && px >= wp->xoff + 2 && px <= right)
+				return (CELL_INSIDE);
+		}
+	}
 
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
@@ -145,8 +163,13 @@ screen_redraw_check_cell(struct client *c, u_int px, u_int py, int pane_status,
 			borders |= 8;
 		if (px <= w->sx && screen_redraw_cell_border(c, px + 1, py, pane_status))
 			borders |= 4;
-		if (py == 0 || screen_redraw_cell_border(c, px, py - 1, pane_status))
-			borders |= 2;
+		if (pane_status == 3) {
+			if (py != 0 && screen_redraw_cell_border(c, px, py - 1, pane_status))
+				borders |= 2;
+		} else {
+			if (py == 0 || screen_redraw_cell_border(c, px, py - 1, pane_status))
+				borders |= 2;
+		}
 		if (py <= w->sy && screen_redraw_cell_border(c, px, py + 1, pane_status))
 			borders |= 1;
 
@@ -206,6 +229,10 @@ screen_redraw_check_is(u_int px, u_int py, int type, int pane_status,
 	if (wp == NULL || (type == CELL_OUTSIDE || type == CELL_INSIDE))
 		return (1);
 
+	/* With status lines mark the entire line. */
+	if (pane_status > 2)
+		return (1);
+
 	/* Check if the pane covers the whole width. */
 	if (wp->xoff == 0 && wp->sx == w->sx) {
 		/* This can either be the top pane or the bottom pane. */
@@ -228,7 +255,8 @@ screen_redraw_check_is(u_int px, u_int py, int type, int pane_status,
 		return (0);
 	}
 
-	return (type);
+	//return (type);
+	return (1);
 }
 
 void
@@ -239,7 +267,10 @@ screen_redraw_draw_pane_status(struct client *c, u_int pane_status, u_int top)
 	struct pane_status	*ps = TAILQ_FIRST(&c->pane_statuses);
 	u_int			 pspos;
 
-	pspos = pane_status - 1;
+	if (pane_status == 1 || pane_status == 3)
+		pspos = 0;
+	else
+		pspos = 1;
 	TAILQ_FOREACH(wp, &w->panes, entry) {
 		if (!window_pane_visible(wp))
 			continue;

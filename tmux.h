@@ -897,6 +897,7 @@ struct window_pane {
 
 	struct screen	*screen;
 	struct screen	 base;
+	u_int		 status_size;
 
 	/* Saved in alternative screen mode. */
 	u_int		 saved_cx;

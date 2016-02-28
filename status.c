@@ -528,6 +528,7 @@ pane_status_redraw(struct client *c)
 			msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-active-status-format"), time(NULL));
 		else
 			msg = status_replace(c, NULL, wp, options_get_string(wp->window->options, "pane-status-format"), time(NULL));
+		/* TODO: csterlen? */
 		len = screen_write_strlen("%s", msg);
 		if (len > wp->sx) {
 			len = wp->sx;
@@ -537,6 +538,7 @@ pane_status_redraw(struct client *c)
 		screen_write_cnputs(&ctx, len, &stdgc, "%s", msg);
 		screen_write_stop(&ctx);
 		free(msg);
+		wp->status_size = len;
 		TAILQ_INSERT_TAIL(&c->pane_statuses, pane_status, entry);
 	}
 

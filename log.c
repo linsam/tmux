@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,39 +17,62 @@
  */
 
 #include <sys/types.h>
-#include <time.h>
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "tmux.h"
 
-FILE	*log_file;
+static FILE	*log_file;
+static int	 log_level;
 
-void	 log_event_cb(int, const char *);
-void	 log_vwrite(const char *, va_list);
+static void	 log_event_cb(int, const char *);
+static void	 log_vwrite(const char *, va_list);
 
 /* Log callback for libevent. */
-void
-log_event_cb(unused int severity, const char *msg)
+static void
+log_event_cb(__unused int severity, const char *msg)
 {
 	log_debug("%s", msg);
 }
 
+/* Increment log level. */
+void
+log_add_level(void)
+{
+	log_level++;
+}
+
+/* Get log level. */
+int
+log_get_level(void)
+{
+	return (log_level);
+}
+
 /* Open logging to file. */
 void
-log_open(const char *path)
+log_open(const char *name)
 {
+	char	*path;
+
+	if (log_level == 0)
+		return;
+
+	if (log_file != NULL)
+		fclose(log_file);
+
+	xasprintf(&path, "tmux-%s-%ld.log", name, (long)getpid());
 	log_file = fopen(path, "w");
+	free(path);
 	if (log_file == NULL)
 		return;
 
 	setvbuf(log_file, NULL, _IOLBF, 0);
 	event_set_log_callback(log_event_cb);
-
-	tzset();
 }
 
 /* Close logging. */
@@ -64,19 +87,27 @@ log_close(void)
 }
 
 /* Write a log message. */
-void
+static void
 log_vwrite(const char *msg, va_list ap)
 {
-	char	*fmt;
+	char		*fmt, *out;
+	struct timeval	 tv;
 
 	if (log_file == NULL)
 		return;
 
-	if (asprintf(&fmt, "%s\n", msg) == -1)
+	if (vasprintf(&fmt, msg, ap) == -1)
 		exit(1);
-	if (vfprintf(log_file, fmt, ap) == -1)
+	if (stravis(&out, fmt, VIS_OCTAL|VIS_CSTYLE|VIS_TAB|VIS_NL) == -1)
+		exit(1);
+
+	gettimeofday(&tv, NULL);
+	if (fprintf(log_file, "%lld.%06d %s\n", (long long)tv.tv_sec,
+	    (int)tv.tv_usec, out) == -1)
 		exit(1);
 	fflush(log_file);
+
+	free(out);
 	free(fmt);
 }
 
@@ -93,7 +124,7 @@ log_debug(const char *msg, ...)
 
 /* Log a critical error with error string and die. */
 __dead void
-log_fatal(const char *msg, ...)
+fatal(const char *msg, ...)
 {
 	char	*fmt;
 	va_list	 ap;
@@ -107,7 +138,7 @@ log_fatal(const char *msg, ...)
 
 /* Log a critical error and die. */
 __dead void
-log_fatalx(const char *msg, ...)
+fatalx(const char *msg, ...)
 {
 	char	*fmt;
 	va_list	 ap;

@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
  * Copyright (c) 2014 Tiago Cunha <tcunha@users.sourceforge.net>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -168,12 +168,12 @@ style_update_new(struct options *oo, const char *name, const char *newname)
 
 	o = options_find1(oo, newname);
 	if (o == NULL)
-		o = options_set_style (oo, newname, "default", 0);
+		o = options_set_style(oo, newname, "default", 0);
 	gc = &o->style;
 
 	o = options_find1(oo, name);
 	if (o == NULL)
-		o = options_set_number (oo, name, 8);
+		o = options_set_number(oo, name, 8);
 	value = o->num;
 
 	if (strstr(name, "-bg") != NULL)
@@ -251,4 +251,16 @@ style_apply_update(struct grid_cell *gc, struct options *oo, const char *name)
 	}
 	if (gcp->attr != 0)
 		gc->attr |= gcp->attr;
+}
+
+/* Check if two styles are the same. */
+int
+style_equal(const struct grid_cell *gc1, const struct grid_cell *gc2)
+{
+	return gc1->fg == gc2->fg &&
+		gc1->bg == gc2->bg &&
+		(gc1->flags & ~GRID_FLAG_PADDING) ==
+		(gc2->flags & ~GRID_FLAG_PADDING) &&
+		(gc1->attr & ~GRID_ATTR_CHARSET) ==
+		(gc2->attr & ~GRID_ATTR_CHARSET);
 }

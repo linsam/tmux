@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -31,65 +31,78 @@
 enum cmd_retval	 cmd_break_pane_exec(struct cmd *, struct cmd_q *);
 
 const struct cmd_entry cmd_break_pane_entry = {
-	"break-pane", "breakp",
-	"dPF:t:", 0, 0,
-	"[-dP] [-F format] " CMD_TARGET_PANE_USAGE,
-	0,
-	cmd_break_pane_exec
+	.name = "break-pane",
+	.alias = "breakp",
+
+	.args = { "dPF:s:t:", 0, 0 },
+	.usage = "[-dP] [-F format] " CMD_SRCDST_PANE_USAGE,
+
+	.sflag = CMD_PANE,
+	.tflag = CMD_WINDOW_INDEX,
+
+	.flags = 0,
+	.exec = cmd_break_pane_exec
 };
 
 enum cmd_retval
 cmd_break_pane_exec(struct cmd *self, struct cmd_q *cmdq)
 {
 	struct args		*args = self->args;
-	struct winlink		*wl;
-	struct session		*s;
-	struct window_pane	*wp;
-	struct window		*w;
+	struct winlink		*wl = cmdq->state.sflag.wl;
+	struct session		*src_s = cmdq->state.sflag.s;
+	struct session		*dst_s = cmdq->state.tflag.s;
+	struct window_pane	*wp = cmdq->state.sflag.wp;
+	struct window		*w = wl->window;
 	char			*name;
 	char			*cause;
-	int			 base_idx;
+	int			 idx = cmdq->state.tflag.idx;
 	struct format_tree	*ft;
 	const char		*template;
 	char			*cp;
 
-	if ((wl = cmd_find_pane(cmdq, args_get(args, 't'), &s, &wp)) == NULL)
-		return (CMD_RETURN_ERROR);
-
-	if (window_count_panes(wl->window) == 1) {
-		cmdq_error(cmdq, "can't break with only one pane");
+	if (idx != -1 && winlink_find_by_index(&dst_s->windows, idx) != NULL) {
+		cmdq_error(cmdq, "index %d already in use", idx);
 		return (CMD_RETURN_ERROR);
 	}
 
-	w = wl->window;
+	if (window_count_panes(w) == 1) {
+		cmdq_error(cmdq, "can't break with only one pane");
+		return (CMD_RETURN_ERROR);
+	}
 	server_unzoom_window(w);
 
 	TAILQ_REMOVE(&w->panes, wp, entry);
 	window_lost_pane(w, wp);
 	layout_close_pane(wp);
 
-	w = wp->window = window_create1(s->sx, s->sy);
+	w = wp->window = window_create1(dst_s->sx, dst_s->sy);
 	TAILQ_INSERT_HEAD(&w->panes, wp, entry);
 	w->active = wp;
 	name = default_window_name(w);
 	window_set_name(w, name);
 	free(name);
 	layout_init(w, wp);
+	wp->flags |= PANE_CHANGED;
 
-	base_idx = options_get_number(&s->options, "base-index");
-	wl = session_attach(s, w, -1 - base_idx, &cause); /* can't fail */
+	if (idx == -1)
+		idx = -1 - options_get_number(dst_s->options, "base-index");
+	wl = session_attach(dst_s, w, idx, &cause); /* can't fail */
 	if (!args_has(self->args, 'd'))
-		session_select(s, wl->idx);
+		session_select(dst_s, wl->idx);
 
-	server_redraw_session(s);
-	server_status_session_group(s);
+	server_redraw_session(src_s);
+	if (src_s != dst_s)
+		server_redraw_session(dst_s);
+	server_status_session_group(src_s);
+	if (src_s != dst_s)
+		server_status_session_group(dst_s);
 
 	if (args_has(args, 'P')) {
 		if ((template = args_get(args, 'F')) == NULL)
 			template = BREAK_PANE_TEMPLATE;
 
-		ft = format_create();
-		format_defaults(ft, cmd_find_client(cmdq, NULL, 1), s, wl, wp);
+		ft = format_create(cmdq, 0);
+		format_defaults(ft, cmdq->state.c, dst_s, wl, wp);
 
 		cp = format_expand(ft, template);
 		cmdq_print(cmdq, "%s", cp);

@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -37,7 +37,11 @@ key_table_cmp(struct key_table *e1, struct key_table *e2)
 int
 key_bindings_cmp(struct key_binding *bd1, struct key_binding *bd2)
 {
-	return (bd1->key - bd2->key);
+	if (bd1->key < bd2->key)
+		return (-1);
+	if (bd1->key > bd2->key)
+		return (1);
+	return (0);
 }
 
 struct key_table *
@@ -80,7 +84,7 @@ key_bindings_unref_table(struct key_table *table)
 }
 
 void
-key_bindings_add(const char *name, int key, int can_repeat,
+key_bindings_add(const char *name, key_code key, int can_repeat,
     struct cmd_list *cmdlist)
 {
 	struct key_table	*table;
@@ -105,7 +109,7 @@ key_bindings_add(const char *name, int key, int can_repeat,
 }
 
 void
-key_bindings_remove(const char *name, int key)
+key_bindings_remove(const char *name, key_code key)
 {
 	struct key_table	*table;
 	struct key_binding	 bd_find, *bd;
@@ -161,22 +165,23 @@ key_bindings_init(void)
 		"bind , command-prompt -I'#W' \"rename-window '%%'\"",
 		"bind - delete-buffer",
 		"bind . command-prompt \"move-window -t '%%'\"",
-		"bind 0 select-window -t:0",
-		"bind 1 select-window -t:1",
-		"bind 2 select-window -t:2",
-		"bind 3 select-window -t:3",
-		"bind 4 select-window -t:4",
-		"bind 5 select-window -t:5",
-		"bind 6 select-window -t:6",
-		"bind 7 select-window -t:7",
-		"bind 8 select-window -t:8",
-		"bind 9 select-window -t:9",
+		"bind 0 select-window -t:=0",
+		"bind 1 select-window -t:=1",
+		"bind 2 select-window -t:=2",
+		"bind 3 select-window -t:=3",
+		"bind 4 select-window -t:=4",
+		"bind 5 select-window -t:=5",
+		"bind 6 select-window -t:=6",
+		"bind 7 select-window -t:=7",
+		"bind 8 select-window -t:=8",
+		"bind 9 select-window -t:=9",
 		"bind : command-prompt",
 		"bind \\; last-pane",
 		"bind = choose-buffer",
 		"bind ? list-keys",
 		"bind D choose-client",
 		"bind L switch-client -l",
+		"bind M select-pane -M",
 		"bind [ copy-mode",
 		"bind ] paste-buffer",
 		"bind c new-window",
@@ -184,6 +189,7 @@ key_bindings_init(void)
 		"bind f command-prompt \"find-window '%%'\"",
 		"bind i display-message",
 		"bind l last-window",
+		"bind m select-pane -m",
 		"bind n next-window",
 		"bind o select-pane -t:.+",
 		"bind p previous-window",
@@ -221,7 +227,11 @@ key_bindings_init(void)
 		"bind -n MouseDown1Pane select-pane -t=\\; send-keys -M",
 		"bind -n MouseDrag1Border resize-pane -M",
 		"bind -n MouseDown1Status select-window -t=",
+		"bind -n WheelDownStatus next-window",
+		"bind -n WheelUpStatus previous-window",
 		"bind -n MouseDrag1Pane if -Ft= '#{mouse_any_flag}' 'if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"' 'copy-mode -M'",
+		"bind -n MouseDown3Pane if-shell -Ft= '#{mouse_any_flag}' 'select-pane -t=; send-keys -M' 'select-pane -mt='",
+		"bind -n WheelUpPane if-shell -Ft= '#{mouse_any_flag}' 'send-keys -M' 'if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\"'",
 	};
 	u_int		 i;
 	struct cmd_list	*cmdlist;
@@ -236,7 +246,7 @@ key_bindings_init(void)
 		if (error != 0)
 			fatalx("bad default key");
 		cmdq_run(cmdq, cmdlist, NULL);
-		cmd_list_free (cmdlist);
+		cmd_list_free(cmdlist);
 	}
 	cmdq_free(cmdq);
 }

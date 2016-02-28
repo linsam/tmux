@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -85,9 +85,9 @@ layout_print_cell(struct layout_cell *lc, const char *hdr, u_int n)
 {
 	struct layout_cell	*lcchild;
 
-	log_debug(
-	    "%s:%*s%p type %u [parent %p] wp=%p [%u,%u %ux%u]", hdr, n, " ", lc,
-	    lc->type, lc->parent, lc->wp, lc->xoff, lc->yoff, lc->sx, lc->sy);
+	log_debug("%s:%*s%p type %u [parent %p] wp=%p [%u,%u %ux%u]", hdr, n,
+	    " ", lc, lc->type, lc->parent, lc->wp, lc->xoff, lc->yoff, lc->sx,
+	    lc->sy);
 	switch (lc->type) {
 	case LAYOUT_LEFTRIGHT:
 	case LAYOUT_TOPBOTTOM:
@@ -100,8 +100,8 @@ layout_print_cell(struct layout_cell *lc, const char *hdr, u_int n)
 }
 
 void
-layout_set_size(
-    struct layout_cell *lc, u_int sx, u_int sy, u_int xoff, u_int yoff)
+layout_set_size(struct layout_cell *lc, u_int sx, u_int sy, u_int xoff,
+    u_int yoff)
 {
 	lc->sx = sx;
 	lc->sy = sy;
@@ -174,7 +174,7 @@ layout_fix_panes(struct window *w, u_int wsx, u_int wsy)
 	u_int			 yshift;
 	u_int			 ylenshift;
 
-	pane_status = options_get_number(&w->options, "pane-status");
+	pane_status = options_get_number(w->options, "pane-status");
 
 	yshift = (pane_status == 1) ? 1 : 0;
 	ylenshift = (pane_status != 0) ? 1 : 0;
@@ -531,8 +531,8 @@ layout_resize_pane(struct window_pane *wp, enum layout_type type, int change)
 
 /* Helper function to grow pane. */
 int
-layout_resize_pane_grow(
-    struct layout_cell *lc, enum layout_type type, int needed)
+layout_resize_pane_grow(struct layout_cell *lc, enum layout_type type,
+    int needed)
 {
 	struct layout_cell	*lcadd, *lcremove;
 	u_int			 size;
@@ -572,8 +572,8 @@ layout_resize_pane_grow(
 
 /* Helper function to shrink pane. */
 int
-layout_resize_pane_shrink(
-    struct layout_cell *lc, enum layout_type type, int needed)
+layout_resize_pane_shrink(struct layout_cell *lc, enum layout_type type,
+    int needed)
 {
 	struct layout_cell	*lcadd, *lcremove;
 	u_int			 size;
@@ -615,8 +615,8 @@ layout_assign_pane(struct layout_cell *lc, struct window_pane *wp)
  * split. This must be followed by layout_assign_pane before much else happens!
  **/
 struct layout_cell *
-layout_split_pane(
-    struct window_pane *wp, enum layout_type type, int size, int insert_before)
+layout_split_pane(struct window_pane *wp, enum layout_type type, int size,
+    int insert_before)
 {
 	struct layout_cell     *lc, *lcparent, *lcnew, *lc1, *lc2;
 	u_int			sx, sy, xoff, yoff, size1, size2;
@@ -696,6 +696,8 @@ layout_split_pane(
 	case LAYOUT_LEFTRIGHT:
 		if (size < 0)
 			size2 = ((sx + 1) / 2) - 1;
+		else if (insert_before)
+			size2 = sx - size - 1;
 		else
 			size2 = size;
 		if (size2 < PANE_MINIMUM)
@@ -709,6 +711,8 @@ layout_split_pane(
 	case LAYOUT_TOPBOTTOM:
 		if (size < 0)
 			size2 = ((sy + 1) / 2) - 1;
+		else if (insert_before)
+			size2 = sy - size - 1;
 		else
 			size2 = size;
 		if (size2 < PANE_MINIMUM)

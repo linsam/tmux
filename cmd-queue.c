@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2013 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2013 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -25,6 +25,8 @@
 
 #include "tmux.h"
 
+static enum cmd_retval	cmdq_continue_one(struct cmd_q *);
+
 /* Create new command queue. */
 struct cmd_q *
 cmdq_new(struct client *c)
@@ -33,7 +35,7 @@ cmdq_new(struct client *c)
 
 	cmdq = xcalloc(1, sizeof *cmdq);
 	cmdq->references = 1;
-	cmdq->dead = 0;
+	cmdq->flags = 0;
 
 	cmdq->client = c;
 	cmdq->client_exit = -1;
@@ -42,6 +44,9 @@ cmdq_new(struct client *c)
 	cmdq->item = NULL;
 	cmdq->cmd = NULL;
 
+	cmd_find_clear_state(&cmdq->current, NULL, 0);
+	cmdq->parent = NULL;
+
 	return (cmdq);
 }
 
@@ -49,8 +54,11 @@ cmdq_new(struct client *c)
 int
 cmdq_free(struct cmd_q *cmdq)
 {
-	if (--cmdq->references != 0)
-		return (cmdq->dead);
+	if (--cmdq->references != 0) {
+		if (cmdq->flags & CMD_Q_DEAD)
+			return (1);
+		return (0);
+	}
 
 	cmdq_flush(cmdq);
 	free(cmdq);
@@ -64,16 +72,23 @@ cmdq_print(struct cmd_q *cmdq, const char *fmt, ...)
 	struct client	*c = cmdq->client;
 	struct window	*w;
 	va_list		 ap;
+	char		*tmp, *msg;
 
 	va_start(ap, fmt);
 
 	if (c == NULL)
 		/* nothing */;
 	else if (c->session == NULL || (c->flags & CLIENT_CONTROL)) {
-		evbuffer_add_vprintf(c->stdout_data, fmt, ap);
-
+		if (~c->flags & CLIENT_UTF8) {
+			vasprintf(&tmp, fmt, ap);
+			msg = utf8_sanitize(tmp);
+			free(tmp);
+			evbuffer_add(c->stdout_data, msg, strlen(msg));
+			free(msg);
+		} else
+			evbuffer_add_vprintf(c->stdout_data, fmt, ap);
 		evbuffer_add(c->stdout_data, "\n", 1);
-		server_push_stdout(c);
+		server_client_push_stdout(c);
 	} else {
 		w = c->session->curw->window;
 		if (w->active->mode != &window_copy_mode) {
@@ -96,6 +111,7 @@ cmdq_error(struct cmd_q *cmdq, const char *fmt, ...)
 	va_list		 ap;
 	char		*msg;
 	size_t		 msglen;
+	char		*tmp;
 
 	va_start(ap, fmt);
 	msglen = xvasprintf(&msg, fmt, ap);
@@ -104,10 +120,15 @@ cmdq_error(struct cmd_q *cmdq, const char *fmt, ...)
 	if (c == NULL)
 		cfg_add_cause("%s:%u: %s", cmd->file, cmd->line, msg);
 	else if (c->session == NULL || (c->flags & CLIENT_CONTROL)) {
+		if (~c->flags & CLIENT_UTF8) {
+			tmp = msg;
+			msg = utf8_sanitize(tmp);
+			free(tmp);
+			msglen = strlen(msg);
+		}
 		evbuffer_add(c->stderr_data, msg, msglen);
 		evbuffer_add(c->stderr_data, "\n", 1);
-
-		server_push_stderr(c);
+		server_client_push_stderr(c);
 		c->retval = 1;
 	} else {
 		*msg = toupper((u_char) *msg);
@@ -128,7 +149,7 @@ cmdq_guard(struct cmd_q *cmdq, const char *guard, int flags)
 
 	evbuffer_add_printf(c->stdout_data, "%%%s %ld %u %d\n", guard,
 	    (long) cmdq->time, cmdq->number, flags);
-	server_push_stdout(c);
+	server_client_push_stdout(c);
 }
 
 /* Add command list to queue and begin processing if needed. */
@@ -160,17 +181,52 @@ cmdq_append(struct cmd_q *cmdq, struct cmd_list *cmdlist, struct mouse_event *m)
 		item->mouse.valid = 0;
 }
 
+/* Process one command. */
+static enum cmd_retval
+cmdq_continue_one(struct cmd_q *cmdq)
+{
+	struct cmd	*cmd = cmdq->cmd;
+	enum cmd_retval	 retval;
+	char		*tmp;
+	int		 flags = !!(cmd->flags & CMD_CONTROL);
+
+	tmp = cmd_print(cmd);
+	log_debug("cmdq %p: %s", cmdq, tmp);
+	free(tmp);
+
+	cmdq->time = time(NULL);
+	cmdq->number++;
+
+	cmdq_guard(cmdq, "begin", flags);
+
+	if (cmd_prepare_state(cmd, cmdq, NULL) != 0)
+		goto error;
+	retval = cmd->entry->exec(cmd, cmdq);
+	if (retval == CMD_RETURN_ERROR)
+		goto error;
+
+	cmdq_guard(cmdq, "end", flags);
+	return (retval);
+
+error:
+	cmdq_guard(cmdq, "error", flags);
+	return (CMD_RETURN_ERROR);
+}
+
 /* Continue processing command queue. Returns 1 if finishes empty. */
 int
 cmdq_continue(struct cmd_q *cmdq)
 {
+	struct client		*c = cmdq->client;
 	struct cmd_q_item	*next;
 	enum cmd_retval		 retval;
-	int			 empty, flags;
-	char			 s[1024];
+	int			 empty;
 
 	cmdq->references++;
 	notify_disable();
+
+	log_debug("continuing cmdq %p: flags %#x, client %p", cmdq, cmdq->flags,
+	    c);
 
 	empty = TAILQ_EMPTY(&cmdq->queue);
 	if (empty)
@@ -184,23 +240,7 @@ cmdq_continue(struct cmd_q *cmdq)
 
 	do {
 		while (cmdq->cmd != NULL) {
-			cmd_print(cmdq->cmd, s, sizeof s);
-			log_debug("cmdq %p: %s (client %d)", cmdq, s,
-			    cmdq->client != NULL ? cmdq->client->ibuf.fd : -1);
-
-			cmdq->time = time(NULL);
-			cmdq->number++;
-
-			flags = !!(cmdq->cmd->flags & CMD_CONTROL);
-			cmdq_guard(cmdq, "begin", flags);
-
-			retval = cmdq->cmd->entry->exec(cmdq->cmd, cmdq);
-
-			if (retval == CMD_RETURN_ERROR)
-				cmdq_guard(cmdq, "error", flags);
-			else
-				cmdq_guard(cmdq, "end", flags);
-
+			retval = cmdq_continue_one(cmdq);
 			if (retval == CMD_RETURN_ERROR)
 				break;
 			if (retval == CMD_RETURN_WAIT)
@@ -209,7 +249,6 @@ cmdq_continue(struct cmd_q *cmdq)
 				cmdq_flush(cmdq);
 				goto empty;
 			}
-
 			cmdq->cmd = TAILQ_NEXT(cmdq->cmd, qentry);
 		}
 		next = TAILQ_NEXT(cmdq->item, qentry);
@@ -250,3 +289,4 @@ cmdq_flush(struct cmd_q *cmdq)
 	}
 	cmdq->item = NULL;
 }
+

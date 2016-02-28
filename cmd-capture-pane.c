@@ -36,12 +36,17 @@ char		*cmd_capture_pane_history(struct args *, struct cmd_q *,
 		     struct window_pane *, size_t *);
 
 const struct cmd_entry cmd_capture_pane_entry = {
-	"capture-pane", "capturep",
-	"ab:CeE:JpPqS:t:", 0, 0,
-	"[-aCeJpPq] " CMD_BUFFER_USAGE " [-E end-line] [-S start-line]"
-	CMD_TARGET_PANE_USAGE,
-	0,
-	cmd_capture_pane_exec
+	.name = "capture-pane",
+	.alias = "capturep",
+
+	.args = { "ab:CeE:JpPqS:t:", 0, 0 },
+	.usage = "[-aCeJpPq] " CMD_BUFFER_USAGE " [-E end-line] "
+		 "[-S start-line]" CMD_TARGET_PANE_USAGE,
+
+	.tflag = CMD_PANE,
+
+	.flags = 0,
+	.exec = cmd_capture_pane_exec
 };
 
 char *
@@ -57,15 +62,17 @@ char *
 cmd_capture_pane_pending(struct args *args, struct window_pane *wp,
     size_t *len)
 {
-	char	*buf, *line, tmp[5];
-	size_t	 linelen;
-	u_int	 i;
+	struct evbuffer	*pending;
+	char		*buf, *line, tmp[5];
+	size_t		 linelen;
+	u_int		 i;
 
-	if (wp->ictx.since_ground == NULL)
+	pending = input_pending(wp);
+	if (pending == NULL)
 		return (xstrdup(""));
 
-	line = EVBUFFER_DATA(wp->ictx.since_ground);
-	linelen = EVBUFFER_LENGTH(wp->ictx.since_ground);
+	line = EVBUFFER_DATA(pending);
+	linelen = EVBUFFER_LENGTH(pending);
 
 	buf = xstrdup("");
 	if (args_has(args, 'C')) {
@@ -173,13 +180,10 @@ cmd_capture_pane_exec(struct cmd *self, struct cmd_q *cmdq)
 {
 	struct args		*args = self->args;
 	struct client		*c;
-	struct window_pane	*wp;
+	struct window_pane	*wp = cmdq->state.tflag.wp;
 	char			*buf, *cause;
 	const char		*bufname;
 	size_t			 len;
-
-	if (cmd_find_pane(cmdq, args_get(args, 't'), NULL, &wp) == NULL)
-		return (CMD_RETURN_ERROR);
 
 	len = 0;
 	if (args_has(args, 'P'))
@@ -194,22 +198,23 @@ cmd_capture_pane_exec(struct cmd *self, struct cmd_q *cmdq)
 		if (c == NULL ||
 		    (c->session != NULL && !(c->flags & CLIENT_CONTROL))) {
 			cmdq_error(cmdq, "can't write to stdout");
+			free(buf);
 			return (CMD_RETURN_ERROR);
 		}
 		evbuffer_add(c->stdout_data, buf, len);
+		free(buf);
 		if (args_has(args, 'P') && len > 0)
 		    evbuffer_add(c->stdout_data, "\n", 1);
-		server_push_stdout(c);
+		server_client_push_stdout(c);
 	} else {
-
 		bufname = NULL;
 		if (args_has(args, 'b'))
 			bufname = args_get(args, 'b');
 
 		if (paste_set(buf, len, bufname, &cause) != 0) {
 			cmdq_error(cmdq, "%s", cause);
-			free(buf);
 			free(cause);
+			free(buf);
 			return (CMD_RETURN_ERROR);
 		}
 	}

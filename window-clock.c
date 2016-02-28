@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2009 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,9 +28,9 @@ struct screen *window_clock_init(struct window_pane *);
 void	window_clock_free(struct window_pane *);
 void	window_clock_resize(struct window_pane *, u_int, u_int);
 void	window_clock_key(struct window_pane *, struct client *,
-	    struct session *, int, struct mouse_event *);
-void	window_clock_timer(struct window_pane *);
+	    struct session *, key_code, struct mouse_event *);
 
+void	window_clock_timer_callback(int, short, void *);
 void	window_clock_draw_screen(struct window_pane *);
 
 const struct window_mode window_clock_mode = {
@@ -38,12 +38,12 @@ const struct window_mode window_clock_mode = {
 	window_clock_free,
 	window_clock_resize,
 	window_clock_key,
-	window_clock_timer,
 };
 
 struct window_clock_mode_data {
 	struct screen	        screen;
 	time_t			tim;
+	struct event		timer;
 };
 
 const char window_clock_table[14][5][5] = {
@@ -119,14 +119,41 @@ const char window_clock_table[14][5][5] = {
 	  { 1,0,0,0,1 } },
 };
 
+void
+window_clock_timer_callback(__unused int fd, __unused short events, void *arg)
+{
+	struct window_pane		*wp = arg;
+	struct window_clock_mode_data	*data = wp->modedata;
+	struct tm			 now, then;
+	time_t				 t;
+	struct timeval			 tv = { .tv_sec = 1 };
+
+	evtimer_del(&data->timer);
+	evtimer_add(&data->timer, &tv);
+
+	t = time(NULL);
+	gmtime_r(&t, &now);
+	gmtime_r(&data->tim, &then);
+	if (now.tm_min == then.tm_min)
+		return;
+	data->tim = t;
+
+	window_clock_draw_screen(wp);
+	server_redraw_window(wp->window);
+}
+
 struct screen *
 window_clock_init(struct window_pane *wp)
 {
 	struct window_clock_mode_data	*data;
 	struct screen			*s;
+	struct timeval			 tv = { .tv_sec = 1 };
 
 	wp->modedata = data = xmalloc(sizeof *data);
 	data->tim = time(NULL);
+
+	evtimer_set(&data->timer, window_clock_timer_callback, wp);
+	evtimer_add(&data->timer, &tv);
 
 	s = &data->screen;
 	screen_init(s, screen_size_x(&wp->base), screen_size_y(&wp->base), 0);
@@ -142,6 +169,7 @@ window_clock_free(struct window_pane *wp)
 {
 	struct window_clock_mode_data	*data = wp->modedata;
 
+	evtimer_del(&data->timer);
 	screen_free(&data->screen);
 	free(data);
 }
@@ -157,28 +185,11 @@ window_clock_resize(struct window_pane *wp, u_int sx, u_int sy)
 }
 
 void
-window_clock_key(struct window_pane *wp, unused struct client *c,
-    unused struct session *sess, unused int key, unused struct mouse_event *m)
+window_clock_key(struct window_pane *wp, __unused struct client *c,
+    __unused struct session *sess, __unused key_code key,
+    __unused struct mouse_event *m)
 {
 	window_pane_reset_mode(wp);
-}
-
-void
-window_clock_timer(struct window_pane *wp)
-{
-	struct window_clock_mode_data	*data = wp->modedata;
-	struct tm			 now, then;
-	time_t				 t;
-
-	t = time(NULL);
-	gmtime_r(&t, &now);
-	gmtime_r(&data->tim, &then);
-	if (now.tm_min == then.tm_min)
-		return;
-	data->tim = t;
-
-	window_clock_draw_screen(wp);
-	server_redraw_window(wp->window);
 }
 
 void
@@ -194,8 +205,8 @@ window_clock_draw_screen(struct window_pane *wp)
 	struct tm			*tm;
 	u_int				 i, j, x, y, idx;
 
-	colour = options_get_number(&wp->window->options, "clock-mode-colour");
-	style = options_get_number(&wp->window->options, "clock-mode-style");
+	colour = options_get_number(wp->window->options, "clock-mode-colour");
+	style = options_get_number(wp->window->options, "clock-mode-style");
 
 	screen_write_start(&ctx, NULL, s);
 
@@ -222,7 +233,6 @@ window_clock_draw_screen(struct window_pane *wp)
 			colour_set_fg(&gc, colour);
 			screen_write_puts(&ctx, &gc, "%s", tim);
 		}
-
 
 		screen_write_stop(&ctx);
 		return;

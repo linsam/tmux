@@ -1,7 +1,7 @@
 /* $OpenBSD$ */
 
 /*
- * Copyright (c) 2007 Nicholas Marriott <nicm@users.sourceforge.net>
+ * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,11 +26,13 @@
 
 #include "tmux.h"
 
-/* Global session list. */
 struct sessions	sessions;
-struct sessions dead_sessions;
 u_int		next_session_id;
 struct session_groups session_groups;
+
+void	session_free(int, short, void *);
+
+void	session_lock_timer(int, short, void *);
 
 struct winlink *session_next_alert(struct winlink *);
 struct winlink *session_previous_alert(struct winlink *);
@@ -101,30 +103,28 @@ session_find_by_id(u_int id)
 /* Create a new session. */
 struct session *
 session_create(const char *name, int argc, char **argv, const char *path,
-    int cwd, struct environ *env, struct termios *tio, int idx, u_int sx,
-    u_int sy, char **cause)
+    const char *cwd, struct environ *env, struct termios *tio, int idx,
+    u_int sx, u_int sy, char **cause)
 {
 	struct session	*s;
 	struct winlink	*wl;
 
-	s = xmalloc(sizeof *s);
-	s->references = 0;
+	s = xcalloc(1, sizeof *s);
+	s->references = 1;
 	s->flags = 0;
 
-	if (gettimeofday(&s->creation_time, NULL) != 0)
-		fatal("gettimeofday failed");
-	session_update_activity(s);
-
-	s->cwd = dup(cwd);
+	s->cwd = xstrdup(cwd);
 
 	s->curw = NULL;
 	TAILQ_INIT(&s->lastw);
 	RB_INIT(&s->windows);
 
-	options_init(&s->options, &global_s_options);
-	environ_init(&s->environ);
+	s->environ = environ_create();
 	if (env != NULL)
-		environ_copy(env, &s->environ);
+		environ_copy(env, s->environ);
+
+	s->options = options_create(global_s_options);
+	s->hooks = hooks_create(global_hooks);
 
 	s->tio = NULL;
 	if (tio != NULL) {
@@ -148,6 +148,12 @@ session_create(const char *name, int argc, char **argv, const char *path,
 	}
 	RB_INSERT(sessions, &sessions, s);
 
+	log_debug("new session %s $%u", s->name, s->id);
+
+	if (gettimeofday(&s->creation_time, NULL) != 0)
+		fatal("gettimeofday failed");
+	session_update_activity(s, &s->creation_time);
+
 	if (argc >= 0) {
 		wl = session_new(s, NULL, argc, argv, path, cwd, idx, cause);
 		if (wl == NULL) {
@@ -163,6 +169,36 @@ session_create(const char *name, int argc, char **argv, const char *path,
 	return (s);
 }
 
+/* Remove a reference from a session. */
+void
+session_unref(struct session *s)
+{
+	log_debug("session %s has %d references", s->name, s->references);
+
+	s->references--;
+	if (s->references == 0)
+		event_once(-1, EV_TIMEOUT, session_free, s, NULL);
+}
+
+/* Free session. */
+void
+session_free(__unused int fd, __unused short events, void *arg)
+{
+	struct session	*s = arg;
+
+	log_debug("session %s freed (%d references)", s->name, s->references);
+
+	if (s->references == 0) {
+		environ_free(s->environ);
+
+		options_free(s->options);
+		hooks_free(s->hooks);
+
+		free(s->name);
+		free(s);
+	}
+}
+
 /* Destroy a session. */
 void
 session_destroy(struct session *s)
@@ -176,9 +212,10 @@ session_destroy(struct session *s)
 
 	free(s->tio);
 
+	if (event_initialized(&s->lock_timer))
+		event_del(&s->lock_timer);
+
 	session_group_remove(s);
-	environ_free(&s->environ);
-	options_free(&s->options);
 
 	while (!TAILQ_EMPTY(&s->lastw))
 		winlink_stack_remove(&s->lastw, TAILQ_FIRST(&s->lastw));
@@ -188,9 +225,9 @@ session_destroy(struct session *s)
 		winlink_remove(&s->windows, wl);
 	}
 
-	close(s->cwd);
+	free((void *)s->cwd);
 
-	RB_INSERT(sessions, &dead_sessions, s);
+	session_unref(s);
 }
 
 /* Check a session name is valid: not empty and no colons or periods. */
@@ -200,12 +237,50 @@ session_check_name(const char *name)
 	return (*name != '\0' && name[strcspn(name, ":.")] == '\0');
 }
 
-/* Update session active time. */
+/* Lock session if it has timed out. */
 void
-session_update_activity(struct session *s)
+session_lock_timer(__unused int fd, __unused short events, void *arg)
 {
-	if (gettimeofday(&s->activity_time, NULL) != 0)
-		fatal("gettimeofday");
+	struct session	*s = arg;
+
+	if (s->flags & SESSION_UNATTACHED)
+		return;
+
+	log_debug("session %s locked, activity time %lld", s->name,
+	    (long long)s->activity_time.tv_sec);
+
+	server_lock_session(s);
+	recalculate_sizes();
+}
+
+/* Update activity time. */
+void
+session_update_activity(struct session *s, struct timeval *from)
+{
+	struct timeval	*last = &s->last_activity_time;
+	struct timeval	 tv;
+
+	memcpy(last, &s->activity_time, sizeof *last);
+	if (from == NULL)
+		gettimeofday(&s->activity_time, NULL);
+	else
+		memcpy(&s->activity_time, from, sizeof s->activity_time);
+
+	log_debug("session %s activity %lld.%06d (last %lld.%06d)", s->name,
+	    (long long)s->activity_time.tv_sec, (int)s->activity_time.tv_usec,
+	    (long long)last->tv_sec, (int)last->tv_usec);
+
+	if (evtimer_initialized(&s->lock_timer))
+		evtimer_del(&s->lock_timer);
+	else
+		evtimer_set(&s->lock_timer, session_lock_timer, s);
+
+	if (~s->flags & SESSION_UNATTACHED) {
+		timerclear(&tv);
+		tv.tv_sec = options_get_number(s->options, "lock-after-time");
+		if (tv.tv_sec != 0)
+			evtimer_add(&s->lock_timer, &tv);
+	}
 }
 
 /* Find the next usable session. */
@@ -245,11 +320,11 @@ session_previous_session(struct session *s)
 /* Create a new window on a session. */
 struct winlink *
 session_new(struct session *s, const char *name, int argc, char **argv,
-    const char *path, int cwd, int idx, char **cause)
+    const char *path, const char *cwd, int idx, char **cause)
 {
 	struct window	*w;
 	struct winlink	*wl;
-	struct environ	 env;
+	struct environ	*env;
 	const char	*shell;
 	u_int		 hlimit;
 
@@ -258,29 +333,29 @@ session_new(struct session *s, const char *name, int argc, char **argv,
 		return (NULL);
 	}
 
-	environ_init(&env);
-	environ_copy(&global_environ, &env);
-	environ_copy(&s->environ, &env);
-	server_fill_environ(s, &env);
+	env = environ_create();
+	environ_copy(global_environ, env);
+	environ_copy(s->environ, env);
+	server_fill_environ(s, env);
 
-	shell = options_get_string(&s->options, "default-shell");
+	shell = options_get_string(s->options, "default-shell");
 	if (*shell == '\0' || areshell(shell))
 		shell = _PATH_BSHELL;
 
-	hlimit = options_get_number(&s->options, "history-limit");
-	w = window_create(name, argc, argv, path, shell, cwd, &env, s->tio,
+	hlimit = options_get_number(s->options, "history-limit");
+	w = window_create(name, argc, argv, path, shell, cwd, env, s->tio,
 	    s->sx, s->sy, hlimit, cause);
 	if (w == NULL) {
 		winlink_remove(&s->windows, wl);
-		environ_free(&env);
+		environ_free(env);
 		return (NULL);
 	}
 	winlink_set_window(wl, w);
 	notify_window_linked(s, w);
-	environ_free(&env);
+	environ_free(env);
 
-	if (options_get_number(&s->options, "set-remain-on-exit"))
-		options_set_number(&w->options, "remain-on-exit", 1);
+	if (options_get_number(s->options, "set-remain-on-exit"))
+		options_set_number(w->options, "remain-on-exit", 1);
 
 	session_group_synchronize_from(s);
 	return (wl);
@@ -450,6 +525,7 @@ session_set_current(struct session *s, struct winlink *wl)
 	winlink_stack_push(&s->lastw, s->curw);
 	s->curw = wl;
 	winlink_clear_flags(wl);
+	window_update_activity(wl->window);
 	return (0);
 }
 
@@ -642,7 +718,7 @@ session_renumber_windows(struct session *s)
 	RB_INIT(&s->windows);
 
 	/* Start renumbering from the base-index if it's set. */
-	new_idx = options_get_number(&s->options, "base-index");
+	new_idx = options_get_number(s->options, "base-index");
 	new_curw_idx = 0;
 
 	/* Go through the winlinks and assign new indexes. */

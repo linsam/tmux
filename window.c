@@ -1227,7 +1227,8 @@ window_pane_find_up(struct window_pane *wp)
 	int			 found;
 	int			 has_pane_status;
 
-	has_pane_status = !!options_get_number(wp->window->options, "pane-status");
+	has_pane_status = options_get_number(wp->window->options, "pane-status");
+	has_pane_status = !!(has_pane_status == 1 || has_pane_status == 2);
 
 	if (wp == NULL || !window_pane_visible(wp))
 		return (NULL);
@@ -1276,7 +1277,8 @@ window_pane_find_down(struct window_pane *wp)
 	int			 found;
 	int			 has_pane_status;
 
-	has_pane_status = !!options_get_number(wp->window->options, "pane-status");
+	has_pane_status = options_get_number(wp->window->options, "pane-status");
+	has_pane_status = !!(has_pane_status == 1 || has_pane_status == 2);
 
 	if (wp == NULL || !window_pane_visible(wp))
 		return (NULL);
